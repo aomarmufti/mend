@@ -1,14 +1,22 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { DeviceFrame } from "@/components/DeviceFrame";
 
 /**
  * Presentational-only wrapper. The app underneath is a normal responsive
- * web page; this just optionally frames it for screenshots/demos.
+ * web page; this just optionally frames it for screenshots/demos. Hidden on
+ * the focused session-runner route, which has no chrome of its own.
  */
 export function ShellChrome({ children }: { children: React.ReactNode }) {
   const [framed, setFramed] = useState(false);
+  const pathname = usePathname();
+  const isFocusedFlow = pathname?.startsWith("/session");
+
+  if (isFocusedFlow) {
+    return <div className="min-h-screen bg-paper">{children}</div>;
+  }
 
   return (
     <div className={framed ? "min-h-screen bg-mist py-10" : "min-h-screen bg-paper"}>

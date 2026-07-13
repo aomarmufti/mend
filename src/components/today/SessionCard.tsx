@@ -1,7 +1,20 @@
+"use client";
+
+import { useSyncExternalStore } from "react";
 import Link from "next/link";
 import type { Exercise } from "@/data/exercises";
+import { isCompletedToday } from "@/lib/localSession";
+import { CheckIcon } from "@/components/icons";
+
+const noopSubscribe = () => () => {};
 
 export function SessionCard({ exercises }: { exercises: Exercise[] }) {
+  const completed = useSyncExternalStore(
+    noopSubscribe,
+    isCompletedToday,
+    () => false
+  );
+
   return (
     <div className="rounded-2xl bg-pine p-5 text-paper">
       <div className="flex items-center justify-between">
@@ -22,12 +35,19 @@ export function SessionCard({ exercises }: { exercises: Exercise[] }) {
         ))}
       </ul>
 
-      <Link
-        href="/library"
-        className="mt-4 flex w-full items-center justify-center rounded-xl bg-amber py-3 font-sans text-sm font-semibold text-ink transition hover:opacity-90"
-      >
-        Start session
-      </Link>
+      {completed ? (
+        <div className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white/10 py-3 font-sans text-sm font-semibold text-paper">
+          <CheckIcon className="h-4 w-4 text-moss" />
+          Done for today
+        </div>
+      ) : (
+        <Link
+          href="/session"
+          className="mt-4 flex w-full items-center justify-center rounded-xl bg-amber py-3 font-sans text-sm font-semibold text-ink transition hover:opacity-90"
+        >
+          Start session
+        </Link>
+      )}
     </div>
   );
 }

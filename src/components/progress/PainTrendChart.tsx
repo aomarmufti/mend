@@ -1,9 +1,16 @@
-const painHistory = [6, 5, 5, 4, 3, 3, 2];
+"use client";
+
+import { useSyncExternalStore } from "react";
+import { painHistory as getPainHistory } from "@/lib/localSession";
+
+const BASELINE = [6, 5, 5, 4, 3, 3, 2];
 
 const WIDTH = 280;
 const HEIGHT = 120;
 const PAD = 12;
 const MAX_PAIN = 10;
+
+const noopSubscribe = () => () => {};
 
 function toPoint(value: number, index: number, count: number) {
   const x = PAD + (index / (count - 1)) * (WIDTH - PAD * 2);
@@ -12,14 +19,20 @@ function toPoint(value: number, index: number, count: number) {
 }
 
 export function PainTrendChart() {
-  const points = painHistory.map((v, i) => toPoint(v, i, painHistory.length));
+  const history = useSyncExternalStore(
+    noopSubscribe,
+    getPainHistory,
+    () => BASELINE
+  );
+
+  const points = history.map((v, i) => toPoint(v, i, history.length));
   const linePath = points
     .map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`)
     .join(" ");
   const areaPath = `${linePath} L${points[points.length - 1].x},${HEIGHT - PAD} L${points[0].x},${HEIGHT - PAD} Z`;
 
-  const first = painHistory[0];
-  const last = painHistory[painHistory.length - 1];
+  const first = history[0];
+  const last = history[history.length - 1];
 
   return (
     <div className="rounded-2xl border border-mist bg-white/60 p-4">

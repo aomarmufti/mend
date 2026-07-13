@@ -1,6 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
+import { logPain, todaysPain } from "@/lib/localSession";
+
+const noopSubscribe = () => () => {};
 
 function labelFor(value: number): string {
   if (value === 0) return "No pain";
@@ -10,7 +13,26 @@ function labelFor(value: number): string {
 }
 
 export function PainSlider() {
+  const storedToday = useSyncExternalStore(noopSubscribe, todaysPain, () => null);
+
   const [value, setValue] = useState(3);
+  const [syncedFrom, setSyncedFrom] = useState<number | null>(null);
+  const [logged, setLogged] = useState(false);
+
+  // Adopt today's already-logged value once, the first time it becomes known
+  // (e.g. after hydration reads localStorage) — not an effect, just a
+  // render-time sync per https://react.dev/learn/you-might-not-need-an-effect.
+  if (storedToday !== null && syncedFrom !== storedToday) {
+    setSyncedFrom(storedToday);
+    setValue(storedToday);
+    setLogged(true);
+  }
+
+  function handleLog() {
+    logPain(value);
+    setSyncedFrom(value);
+    setLogged(true);
+  }
 
   return (
     <div className="rounded-2xl border border-mist bg-white/60 p-4">
@@ -31,7 +53,10 @@ export function PainSlider() {
         max={10}
         step={1}
         value={value}
-        onChange={(e) => setValue(Number(e.target.value))}
+        onChange={(e) => {
+          setValue(Number(e.target.value));
+          setLogged(false);
+        }}
         className="mt-4 h-2 w-full appearance-none rounded-full bg-gradient-to-r from-moss via-amber to-coral accent-pine"
         aria-label="Pain level, 0 to 10"
       />
@@ -39,6 +64,15 @@ export function PainSlider() {
         <span>0 — none</span>
         <span>10 — worst</span>
       </div>
+
+      <button
+        type="button"
+        onClick={handleLog}
+        disabled={logged}
+        className="mt-3 w-full rounded-xl bg-pine py-2 font-sans text-xs font-semibold text-paper transition disabled:bg-moss/20 disabled:text-moss"
+      >
+        {logged ? "Logged for today" : "Log check-in"}
+      </button>
     </div>
   );
 }

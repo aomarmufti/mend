@@ -2,6 +2,7 @@ import { exercisesByStage } from "@/data/exercises";
 import { SessionCard } from "@/components/today/SessionCard";
 import { PainSlider } from "@/components/today/PainSlider";
 import { AdherenceDots } from "@/components/today/AdherenceDots";
+import { StreakBadge } from "@/components/today/StreakBadge";
 
 function greeting(): string {
   const hour = new Date().getHours();
@@ -9,8 +10,6 @@ function greeting(): string {
   if (hour < 18) return "Good afternoon";
   return "Good evening";
 }
-
-const STREAK_DAYS = 6;
 
 export default function TodayPage() {
   const todaysExercises = exercisesByStage("Early");
@@ -24,12 +23,7 @@ export default function TodayPage() {
             Let&apos;s <span className="italic text-moss">mend</span> today.
           </h1>
         </div>
-        <div className="flex flex-col items-center rounded-xl border border-mist bg-white/60 px-3 py-1.5">
-          <span className="font-mono text-lg font-semibold text-amber">
-            {STREAK_DAYS}
-          </span>
-          <span className="font-sans text-[10px] text-ink/50">day streak</span>
-        </div>
+        <StreakBadge />
       </div>
 
       <SessionCard exercises={todaysExercises} />
