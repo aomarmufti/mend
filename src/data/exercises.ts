@@ -143,6 +143,9 @@ export const exercises: Exercise[] = [
   },
 ];
 
+/** The only exercise with real Camera Coach tracking logic built so far. */
+export const SUPPORTED_COACH_SLUG = "heel-slides";
+
 export const stageOrder: Stage[] = ["Early", "Middle", "Late"];
 
 export const stageDescription: Record<Stage, string> = {

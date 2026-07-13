@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { exercises, getExerciseBySlug } from "@/data/exercises";
+import { exercises, getExerciseBySlug, SUPPORTED_COACH_SLUG } from "@/data/exercises";
 import { VideoEmbed } from "@/components/library/VideoEmbed";
 import { CheckIcon } from "@/components/icons";
 
@@ -54,11 +54,13 @@ export default async function ExerciseDetailPage({
 
       {exercise.cameraCoach ? (
         <Link
-          href="/coach"
+          href={`/coach?exercise=${exercise.slug}`}
           className="flex items-center justify-between rounded-2xl bg-pine px-4 py-3.5 text-paper"
         >
           <span className="font-sans text-sm font-medium">
-            Try this with AI Camera Coach
+            {exercise.slug === SUPPORTED_COACH_SLUG
+              ? "Try this with AI Camera Coach"
+              : "AI Camera Coach — coming soon"}
           </span>
           <span className="rounded-full bg-amber px-2 py-0.5 font-sans text-[10px] font-bold tracking-wide text-ink">
             PRO
