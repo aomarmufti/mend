@@ -137,10 +137,7 @@ export function PoseCoach() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (!landmarks || landmarks.length === 0) {
-        setChecks((prev) => ({
-          ...prev,
-          caption: "Lie down side-on to the camera to begin.",
-        }));
+        setChecks(initialChecks);
         return;
       }
 
