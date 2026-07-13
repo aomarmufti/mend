@@ -11,8 +11,18 @@ interface SessionLog {
   painLog: Record<string, number>; // YYYY-MM-DD -> pain 0-10
 }
 
+// Deliberately NOT date.toISOString().slice(0, 10) — that gives the UTC
+// calendar date, which silently shifts to the wrong day near midnight for
+// any visitor not in UTC. This uses the browser's local date instead.
+function localDateKey(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function todayKey(): string {
-  return new Date().toISOString().slice(0, 10);
+  return localDateKey(new Date());
 }
 
 function read(): SessionLog {
@@ -82,7 +92,7 @@ export function currentStreak(): number {
     cursor.setDate(cursor.getDate() - 1);
   }
   let streak = 0;
-  while (set.has(cursor.toISOString().slice(0, 10))) {
+  while (set.has(localDateKey(cursor))) {
     streak += 1;
     cursor.setDate(cursor.getDate() - 1);
   }
@@ -119,7 +129,7 @@ export const weekAdherence = memoized(
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
+      const key = localDateKey(d);
       days.push({
         label: labels[d.getDay()],
         done: set.has(key),
