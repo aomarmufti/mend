@@ -1,4 +1,5 @@
 import { exercisesByStage } from "@/data/exercises";
+import { ConditionBanner, ProgrammeGate } from "@/components/ConditionBanner";
 import { SessionCard } from "@/components/today/SessionCard";
 import { PainSlider } from "@/components/today/PainSlider";
 import { AdherenceDots } from "@/components/today/AdherenceDots";
@@ -22,9 +23,15 @@ export default function TodayPage() {
         <StreakBadge />
       </div>
 
-      <SessionCard exercises={todaysExercises} />
-      <PainSlider />
-      <AdherenceDots />
+      <ConditionBanner />
+
+      <ProgrammeGate>
+        <div className="space-y-5">
+          <SessionCard exercises={todaysExercises} />
+          <PainSlider />
+          <AdherenceDots />
+        </div>
+      </ProgrammeGate>
     </div>
   );
 }

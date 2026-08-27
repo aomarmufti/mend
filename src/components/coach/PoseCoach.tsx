@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type {
   NormalizedLandmark,
   PoseLandmarker as PoseLandmarkerType,
@@ -11,6 +12,9 @@ import {
   type CheckStatus,
   type FrameAnalysis,
 } from "@/components/coach/poseMath";
+import { logExercise } from "@/lib/exerciseLog";
+import { readActiveConditionSlug } from "@/lib/activeCondition";
+import { markCompletedToday } from "@/lib/localSession";
 
 const MEDIAPIPE_VERSION = "0.10.35";
 const WASM_BASE_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`;
@@ -18,6 +22,8 @@ const MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 
 const CALIBRATION_FRAMES = 30;
+/** Reps counted before the set rolls over — the upper end of the NHS dosage. */
+const REPS_PER_SET = 10;
 /** Weight of each new frame in the displayed score. Lower = steadier. */
 const SMOOTHING = 0.2;
 /** The canvas redraws every frame; React only needs to repaint this often. */
@@ -47,7 +53,13 @@ const STATUS_LABEL: Record<CheckStatus, string> = {
   off: "Needs work",
 };
 
-type Status = "idle" | "requesting" | "loading-model" | "calibrating" | "tracking" | "error";
+type Status =
+  | "idle"
+  | "requesting"
+  | "loading-model"
+  | "calibrating"
+  | "tracking"
+  | "error";
 
 interface UiState {
   matchPct: number | null;
@@ -56,6 +68,7 @@ interface UiState {
   pelvisStatus: CheckStatus;
   caption: string;
   reps: number;
+  sets: number;
 }
 
 const initialUi: UiState = {
@@ -65,11 +78,16 @@ const initialUi: UiState = {
   pelvisStatus: "good",
   caption: "Lie down side-on to the camera to begin.",
   reps: 0,
+  sets: 0,
 };
 
 async function createLandmarker(
-  vision: Awaited<ReturnType<typeof import("@mediapipe/tasks-vision").FilesetResolver.forVisionTasks>>,
-  PoseLandmarker: typeof import("@mediapipe/tasks-vision").PoseLandmarker
+  vision: Awaited<
+    ReturnType<
+      typeof import("@mediapipe/tasks-vision").FilesetResolver.forVisionTasks
+    >
+  >,
+  PoseLandmarker: typeof import("@mediapipe/tasks-vision").PoseLandmarker,
 ): Promise<PoseLandmarkerType> {
   const options = (delegate: "GPU" | "CPU") => ({
     baseOptions: { modelAssetPath: MODEL_URL, delegate },
@@ -85,13 +103,18 @@ async function createLandmarker(
 }
 
 export function PoseCoach() {
+  const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const landmarkerRef = useRef<PoseLandmarkerType | null>(null);
   const rafRef = useRef<number | null>(null);
   const lastVideoTimeRef = useRef(-1);
 
-  const hipBaselineRef = useRef<{ sum: number; count: number; value: number | null }>({
+  const hipBaselineRef = useRef<{
+    sum: number;
+    count: number;
+    value: number | null;
+  }>({
     sum: 0,
     count: 0,
     value: null,
@@ -106,6 +129,12 @@ export function PoseCoach() {
   const lastUiRef = useRef(0);
   const captionRef = useRef(initialUi.caption);
   const lastLandmarksRef = useRef<NormalizedLandmark[] | null>(null);
+  const setsRef = useRef(0);
+  const scoreSumRef = useRef(0);
+  const scoreCountRef = useRef(0);
+  // Set when tracking actually begins, not at mount — the camera prompt and
+  // model download in between can take tens of seconds and are not exercise.
+  const startedAtRef = useRef(0);
 
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -138,7 +167,8 @@ export function PoseCoach() {
 
       setStatus("loading-model");
       try {
-        const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
+        const { FilesetResolver, PoseLandmarker } =
+          await import("@mediapipe/tasks-vision");
         const vision = await FilesetResolver.forVisionTasks(WASM_BASE_URL);
         const landmarker = await createLandmarker(vision, PoseLandmarker);
         if (cancelled) {
@@ -149,11 +179,14 @@ export function PoseCoach() {
       } catch (err) {
         if (cancelled) return;
         console.error(err);
-        setError("Couldn't load the pose model — check your internet connection.");
+        setError(
+          "Couldn't load the pose model — check your internet connection.",
+        );
         setStatus("error");
         return;
       }
 
+      startedAtRef.current = Date.now();
       setStatus("calibrating");
       loop();
     }
@@ -218,16 +251,26 @@ export function PoseCoach() {
         smoothRef.current =
           smoothRef.current === null
             ? frame.matchPct
-            : smoothRef.current + (frame.matchPct - smoothRef.current) * SMOOTHING;
+            : smoothRef.current +
+              (frame.matchPct - smoothRef.current) * SMOOTHING;
 
+        scoreSumRef.current += frame.matchPct;
+        scoreCountRef.current += 1;
+
+        // A rep is one pass into the good zone and back out of it again.
         if (frame.inGoodZone) {
           inZoneRef.current = true;
         } else if (inZoneRef.current) {
           inZoneRef.current = false;
           repsRef.current += 1;
+          if (repsRef.current >= REPS_PER_SET) {
+            repsRef.current = 0;
+            setsRef.current += 1;
+          }
         }
       } else if (landmarks) {
-        captionRef.current = "Move so your hip, knee and ankle are all in shot.";
+        captionRef.current =
+          "Move so your hip, knee and ankle are all in shot.";
       } else {
         captionRef.current = "Looking for you — lie side-on to the camera.";
       }
@@ -240,12 +283,14 @@ export function PoseCoach() {
         setUi({
           // Holding the last smoothed score keeps the number steady through a
           // dropped frame instead of flashing to zero and back.
-          matchPct: smoothRef.current === null ? null : Math.round(smoothRef.current),
+          matchPct:
+            smoothRef.current === null ? null : Math.round(smoothRef.current),
           kneeAngleDeg: last?.kneeAngleDeg ?? 0,
           depthStatus: last?.depthStatus ?? "off",
           pelvisStatus: last?.pelvisStatus ?? "good",
           caption: captionRef.current,
           reps: repsRef.current,
+          sets: setsRef.current,
         });
       }
     }
@@ -254,9 +299,12 @@ export function PoseCoach() {
       canvas: HTMLCanvasElement,
       video: HTMLVideoElement,
       landmarks: NormalizedLandmark[] | null,
-      frame: FrameAnalysis | null
+      frame: FrameAnalysis | null,
     ) {
-      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+      if (
+        canvas.width !== video.videoWidth ||
+        canvas.height !== video.videoHeight
+      ) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
       }
@@ -278,6 +326,24 @@ export function PoseCoach() {
       stream?.getTracks().forEach((t) => t.stop());
     };
   }, []);
+
+  const endSession = useCallback(() => {
+    const totalReps = setsRef.current * REPS_PER_SET + repsRef.current;
+    logExercise({
+      conditionSlug: readActiveConditionSlug(),
+      exerciseSlug: "heel-slides",
+      exerciseName: "Hip Flexion (Heel Slides)",
+      reps: totalReps,
+      sets: setsRef.current,
+      durationMs: startedAtRef.current ? Date.now() - startedAtRef.current : 0,
+      avgScore: scoreCountRef.current
+        ? Math.round(scoreSumRef.current / scoreCountRef.current)
+        : null,
+    });
+    // A coached set counts as having shown up today, same as the guided runner.
+    if (totalReps > 0) markCompletedToday();
+    router.push("/progress");
+  }, [router]);
 
   const busy = status !== "tracking" && status !== "calibrating";
 
@@ -302,7 +368,8 @@ export function PoseCoach() {
               {status === "requesting" && "Requesting camera permission…"}
               {status === "loading-model" && "Loading pose model…"}
               {status === "error" &&
-                (error ?? "Camera unavailable. Check permissions and try again.")}
+                (error ??
+                  "Camera unavailable. Check permissions and try again.")}
             </p>
           </div>
         )}
@@ -339,13 +406,32 @@ export function PoseCoach() {
           <CheckRow label="Pelvis contact" status={ui.pelvisStatus} />
         </div>
 
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <div className="rounded-xl bg-paper px-3 py-2.5 text-center">
+            <p className="font-mono text-xl font-semibold text-pine">
+              {ui.reps}
+              <span className="text-xs text-ink/40">/{REPS_PER_SET}</span>
+            </p>
+            <p className="font-sans text-[11px] text-ink/50">Reps this set</p>
+          </div>
+          <div className="rounded-xl bg-paper px-3 py-2.5 text-center">
+            <p className="font-mono text-xl font-semibold text-pine">
+              {ui.sets}
+            </p>
+            <p className="font-sans text-[11px] text-ink/50">Sets complete</p>
+          </div>
+        </div>
+
+        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-mist">
+          <div
+            className="h-full rounded-full bg-moss transition-all"
+            style={{ width: `${(ui.reps / REPS_PER_SET) * 100}%` }}
+          />
+        </div>
+
         <div className="mt-3 flex items-center justify-between font-mono text-xs text-ink/50">
           <span>Knee angle</span>
           <span>{Math.round(ui.kneeAngleDeg)}°</span>
-        </div>
-        <div className="mt-1 flex items-center justify-between font-mono text-xs text-ink/50">
-          <span>Reps</span>
-          <span>{ui.reps}</span>
         </div>
 
         <p
@@ -359,6 +445,14 @@ export function PoseCoach() {
         >
           {ui.caption}
         </p>
+
+        <button
+          type="button"
+          onClick={endSession}
+          className="mt-4 flex w-full items-center justify-center rounded-xl bg-amber py-3 font-sans text-sm font-semibold text-ink transition hover:opacity-90"
+        >
+          End session &amp; save
+        </button>
       </div>
     </div>
   );
@@ -382,7 +476,7 @@ function renderSkeleton(
   ctx: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
   landmarks: NormalizedLandmark[],
-  frame: FrameAnalysis | null
+  frame: FrameAnalysis | null,
 ) {
   const w = canvas.width;
   const h = canvas.height;
