@@ -18,6 +18,7 @@ import {
 import { logExercise } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { markCompletedToday } from "@/lib/localSession";
+import { ReferenceFigure } from "@/components/coach/ReferenceFigure";
 
 const MEDIAPIPE_VERSION = "0.10.35";
 const WASM_BASE_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`;
@@ -105,7 +106,13 @@ async function createLandmarker(
   }
 }
 
-export function PoseCoach() {
+export interface PoseCoachProps {
+  /** Called instead of navigating, when the coach is embedded in a session. */
+  onFinish?: (result: { reps: number; sets: number }) => void;
+  finishLabel?: string;
+}
+
+export function PoseCoach({ onFinish, finishLabel }: PoseCoachProps = {}) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -349,8 +356,9 @@ export function PoseCoach() {
     });
     // A coached set counts as having shown up today, same as the guided runner.
     if (totalReps > 0) markCompletedToday();
-    router.push("/progress");
-  }, [router]);
+    if (onFinish) onFinish({ reps: totalReps, sets: setsRef.current });
+    else router.push("/progress");
+  }, [router, onFinish]);
 
   const busy = status !== "tracking" && status !== "calibrating";
 
@@ -396,6 +404,8 @@ export function PoseCoach() {
           </span>
         </div>
       </div>
+
+      <ReferenceFigure />
 
       <div className="rounded-2xl border border-mist bg-white/60 p-4">
         <div className="flex items-baseline justify-between">
@@ -458,7 +468,7 @@ export function PoseCoach() {
           onClick={endSession}
           className="mt-4 flex w-full items-center justify-center rounded-xl bg-amber py-3 font-sans text-sm font-semibold text-ink transition hover:opacity-90"
         >
-          End session &amp; save
+          {finishLabel ?? "End session & save"}
         </button>
       </div>
     </div>
