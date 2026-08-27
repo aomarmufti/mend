@@ -2,15 +2,41 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import type { Exercise } from "@/data/exercises";
+import { SUPPORTED_COACH_SLUG } from "@/data/exercises";
 import { markCompletedToday } from "@/lib/localSession";
 import { CheckIcon } from "@/components/icons";
+
+// Touches navigator.mediaDevices, so it can only run in the browser.
+const PoseCoach = dynamic(
+  () => import("@/components/coach/PoseCoach").then((m) => m.PoseCoach),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="mt-5 flex aspect-[4/3] items-center justify-center rounded-2xl bg-ink/90">
+        <p className="font-sans text-sm text-paper">Starting the camera…</p>
+      </div>
+    ),
+  },
+);
 
 export function SessionRunner({ exercises }: { exercises: Exercise[] }) {
   const router = useRouter();
   const [index, setIndex] = useState(0);
   const [done, setDone] = useState(false);
+  const [coaching, setCoaching] = useState(false);
+
+  const goNext = (isLast: boolean) => {
+    setCoaching(false);
+    if (isLast) {
+      markCompletedToday();
+      setDone(true);
+    } else {
+      setIndex((i) => i + 1);
+    }
+  };
 
   if (done) {
     return (
@@ -71,6 +97,39 @@ export function SessionRunner({ exercises }: { exercises: Exercise[] }) {
           </p>
         </div>
 
+        {exercise.slug === SUPPORTED_COACH_SLUG &&
+          (coaching ? (
+            <div className="mt-5 -mx-5">
+              <PoseCoach
+                finishLabel="Save reps &amp; continue"
+                onFinish={() => goNext(isLast)}
+              />
+              <button
+                type="button"
+                onClick={() => setCoaching(false)}
+                className="mt-3 w-full px-5 text-center font-sans text-sm text-ink/50"
+              >
+                Turn the camera off
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setCoaching(true)}
+              className="mt-5 flex w-full items-center justify-between rounded-2xl bg-pine px-4 py-3.5 text-left text-paper transition hover:opacity-90"
+            >
+              <span>
+                <span className="block font-sans text-sm font-semibold">
+                  Use the camera for this one
+                </span>
+                <span className="mt-0.5 block font-sans text-xs text-paper/70">
+                  Watch the target movement and get live form feedback
+                </span>
+              </span>
+              <span className="shrink-0 font-sans text-lg">→</span>
+            </button>
+          ))}
+
         <div className="mt-4 rounded-2xl border border-mist bg-white/60 p-4">
           <h3 className="font-sans text-sm font-semibold text-ink">Cues</h3>
           <ul className="mt-2 space-y-2">
@@ -89,14 +148,7 @@ export function SessionRunner({ exercises }: { exercises: Exercise[] }) {
 
       <button
         type="button"
-        onClick={() => {
-          if (isLast) {
-            markCompletedToday();
-            setDone(true);
-          } else {
-            setIndex((i) => i + 1);
-          }
-        }}
+        onClick={() => goNext(isLast)}
         className="mt-6 flex w-full items-center justify-center rounded-xl bg-amber py-3.5 font-sans text-sm font-semibold text-ink transition hover:opacity-90"
       >
         {isLast ? "Finish session" : "Mark done — next exercise"}

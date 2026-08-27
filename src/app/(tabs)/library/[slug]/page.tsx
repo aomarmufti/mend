@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { exercises, getExerciseBySlug, SUPPORTED_COACH_SLUG } from "@/data/exercises";
+import {
+  exercises,
+  getExerciseBySlug,
+  SUPPORTED_COACH_SLUG,
+} from "@/data/exercises";
 import { VideoEmbed } from "@/components/library/VideoEmbed";
+import { ReferenceFigure } from "@/components/coach/ReferenceFigure";
 import { CheckIcon } from "@/components/icons";
 
 export function generateStaticParams() {
@@ -23,7 +28,11 @@ export default async function ExerciseDetailPage({
         ← Library
       </Link>
 
-      <VideoEmbed exerciseName={exercise.name} />
+      {exercise.slug === SUPPORTED_COACH_SLUG ? (
+        <ReferenceFigure />
+      ) : (
+        <VideoEmbed exerciseName={exercise.name} />
+      )}
 
       <div>
         <span className="font-sans text-xs font-semibold tracking-wide text-moss uppercase">
@@ -44,7 +53,10 @@ export default async function ExerciseDetailPage({
         <h3 className="font-sans text-sm font-semibold text-ink">Cues</h3>
         <ul className="mt-2 space-y-2">
           {exercise.cues.map((cue, i) => (
-            <li key={i} className="flex items-start gap-2 font-sans text-sm text-ink/70">
+            <li
+              key={i}
+              className="flex items-start gap-2 font-sans text-sm text-ink/70"
+            >
               <CheckIcon className="mt-0.5 h-4 w-4 shrink-0 text-moss" />
               {cue}
             </li>
@@ -59,11 +71,8 @@ export default async function ExerciseDetailPage({
         >
           <span className="font-sans text-sm font-medium">
             {exercise.slug === SUPPORTED_COACH_SLUG
-              ? "Try this with AI Camera Coach"
-              : "AI Camera Coach — coming soon"}
-          </span>
-          <span className="rounded-full bg-amber px-2 py-0.5 font-sans text-[10px] font-bold tracking-wide text-ink">
-            PRO
+              ? "Try this with the camera coach"
+              : "Camera coach — coming soon"}
           </span>
         </Link>
       ) : (
