@@ -185,6 +185,50 @@ export function pelvisScore(hipRise: number): number {
   return clamp(100 - (miss / TARGET.hipRiseTolerance) * 100, 0, 100);
 }
 
+/**
+ * Rep counting needs separate entry and exit thresholds. With a single
+ * boundary, a leg held right at it makes the score cross back and forth on
+ * sensor noise and every crossing counts as another rep — a held position can
+ * rack up dozens. Entry requires a genuinely good position; the rep only
+ * banks once the user has clearly come back out of it.
+ */
+export const REP_ENTER = GOOD;
+export const REP_EXIT = CLOSE;
+/** Floor on how fast reps can legitimately be performed. */
+export const MIN_REP_MS = 600;
+
+export interface RepTracker {
+  inZone: boolean;
+  lastRepAt: number;
+}
+
+export const initialRepTracker: RepTracker = { inZone: false, lastRepAt: 0 };
+
+export function trackRep(
+  tracker: RepTracker,
+  depth: number,
+  pelvis: number,
+  now: number
+): { tracker: RepTracker; counted: boolean } {
+  if (!tracker.inZone) {
+    const entered = depth >= REP_ENTER && pelvis >= REP_ENTER;
+    return {
+      tracker: entered ? { ...tracker, inZone: true } : tracker,
+      counted: false,
+    };
+  }
+
+  if (depth >= REP_EXIT) return { tracker, counted: false };
+
+  // Clearly out of the zone. Bank the rep unless it arrived impossibly fast
+  // after the last one, which means the signal is chattering rather than the
+  // user moving.
+  if (now - tracker.lastRepAt < MIN_REP_MS) {
+    return { tracker: { ...tracker, inZone: false }, counted: false };
+  }
+  return { tracker: { inZone: false, lastRepAt: now }, counted: true };
+}
+
 export interface FrameAnalysis {
   side: Side;
   kneeAngleDeg: number;
