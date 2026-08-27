@@ -9,6 +9,9 @@ import type {
 import {
   analyseFrame,
   activeLeg,
+  trackRep,
+  initialRepTracker,
+  type RepTracker,
   type CheckStatus,
   type FrameAnalysis,
 } from "@/components/coach/poseMath";
@@ -124,7 +127,7 @@ export function PoseCoach() {
   // re-render the whole tree 30–60 times a second for no visible gain.
   const smoothRef = useRef<number | null>(null);
   const lastFrameRef = useRef<FrameAnalysis | null>(null);
-  const inZoneRef = useRef(false);
+  const repTrackerRef = useRef<RepTracker>(initialRepTracker);
   const repsRef = useRef(0);
   const lastUiRef = useRef(0);
   const captionRef = useRef(initialUi.caption);
@@ -257,11 +260,15 @@ export function PoseCoach() {
         scoreSumRef.current += frame.matchPct;
         scoreCountRef.current += 1;
 
-        // A rep is one pass into the good zone and back out of it again.
-        if (frame.inGoodZone) {
-          inZoneRef.current = true;
-        } else if (inZoneRef.current) {
-          inZoneRef.current = false;
+        // A rep is one pass into the good zone and clearly back out of it.
+        const rep = trackRep(
+          repTrackerRef.current,
+          frame.depth,
+          frame.pelvis,
+          now,
+        );
+        repTrackerRef.current = rep.tracker;
+        if (rep.counted) {
           repsRef.current += 1;
           if (repsRef.current >= REPS_PER_SET) {
             repsRef.current = 0;
