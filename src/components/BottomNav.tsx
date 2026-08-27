@@ -2,12 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { HomeIcon, LibraryIcon, CameraIcon, ProgressIcon } from "@/components/icons";
+import {
+  HomeIcon,
+  LibraryIcon,
+  CameraIcon,
+  ProgressIcon,
+} from "@/components/icons";
 
 const tabs = [
   { href: "/today", label: "Today", Icon: HomeIcon },
   { href: "/library", label: "Library", Icon: LibraryIcon },
-  { href: "/coach", label: "Coach", Icon: CameraIcon, pro: true },
+  { href: "/coach", label: "Coach", Icon: CameraIcon },
   { href: "/progress", label: "Progress", Icon: ProgressIcon },
 ];
 
@@ -17,7 +22,7 @@ export function BottomNav() {
   return (
     <nav className="sticky bottom-0 z-40 border-t border-mist bg-paper/95 backdrop-blur">
       <div className="mx-auto flex max-w-md items-stretch justify-between px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))]">
-        {tabs.map(({ href, label, Icon, pro }) => {
+        {tabs.map(({ href, label, Icon }) => {
           const active = pathname === href || pathname.startsWith(href + "/");
           return (
             <Link
@@ -29,11 +34,6 @@ export function BottomNav() {
                 <Icon
                   className={`h-6 w-6 ${active ? "text-pine" : "text-ink/40"}`}
                 />
-                {pro && (
-                  <span className="absolute -top-1.5 -right-3 rounded-full bg-amber px-1 py-px font-sans text-[8px] font-bold tracking-wide text-paper">
-                    PRO
-                  </span>
-                )}
               </span>
               <span
                 className={`font-sans text-[11px] font-medium ${

@@ -1,10 +1,16 @@
 import { PainTrendChart } from "@/components/progress/PainTrendChart";
 import { ArrowUpIcon } from "@/components/icons";
+import { SessionHistory } from "@/components/progress/SessionHistory";
+import { ConditionBanner } from "@/components/ConditionBanner";
 
 export default function ProgressPage() {
   return (
     <div className="space-y-5 px-5 pt-8">
       <h1 className="font-display text-3xl">Progress</h1>
+
+      <ConditionBanner />
+
+      <SessionHistory />
 
       <PainTrendChart />
 
@@ -38,8 +44,8 @@ export default function ProgressPage() {
       </button>
 
       <p className="font-sans text-[11px] text-ink/40">
-        AKPS: Anterior Knee Pain Scale, a standard self-reported function
-        score for PFPS. Figures shown are illustrative demo data.
+        AKPS: Anterior Knee Pain Scale, a standard self-reported function score
+        for PFPS. Figures shown are illustrative demo data.
       </p>
     </div>
   );
