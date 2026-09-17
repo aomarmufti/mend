@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { PoseCoach } from "@/components/coach/PoseCoach";
+import { HoldCoach } from "@/components/coach/HoldCoach";
 import { getExerciseBySlug, SUPPORTED_COACH_SLUG } from "@/data/exercises";
+import { getMobilityExercise, mobilityExercises } from "@/data/mobilityExercises";
 
 export default async function CoachPage({
   searchParams,
@@ -9,6 +11,7 @@ export default async function CoachPage({
 }) {
   const { exercise: slug } = await searchParams;
   const requested = slug ? getExerciseBySlug(slug) : undefined;
+  const mobility = slug ? getMobilityExercise(slug) : undefined;
   const isSupported = !slug || slug === SUPPORTED_COACH_SLUG;
 
   return (
@@ -22,7 +25,9 @@ export default async function CoachPage({
         </div>
       </div>
 
-      {isSupported ? (
+      {mobility ? (
+        <HoldCoach config={mobility.hold} />
+      ) : isSupported ? (
         <PoseCoach />
       ) : (
         <div className="px-5 pt-6">
@@ -44,6 +49,26 @@ export default async function CoachPage({
               Try Heel Slides Coach
             </Link>
           </div>
+        </div>
+      )}
+
+      {!mobility && (
+        <div className="mt-6 space-y-2 px-5 pb-8">
+          <h2 className="font-sans text-xs font-semibold tracking-wide text-moss uppercase">
+            Hold &amp; stretch exercises
+          </h2>
+          {mobilityExercises.map((exercise) => (
+            <Link
+              key={exercise.slug}
+              href={`/coach?exercise=${exercise.slug}`}
+              className="flex items-center justify-between gap-3 rounded-xl border border-mist bg-white/60 px-4 py-3 transition hover:border-moss/40"
+            >
+              <span className="font-sans text-sm font-medium text-ink">{exercise.name}</span>
+              <span className="shrink-0 rounded-full bg-moss/15 px-2 py-1 font-sans text-[10px] font-semibold tracking-wide text-moss uppercase">
+                Coach
+              </span>
+            </Link>
+          ))}
         </div>
       )}
     </div>
