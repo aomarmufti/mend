@@ -25,8 +25,33 @@ export default async function CoachPage({
         </div>
       </div>
 
-      {mobility ? (
+      {mobility?.hold ? (
         <HoldCoach config={mobility.hold} />
+      ) : mobility ? (
+        <div className="px-5 pt-6">
+          <div className="rounded-2xl border border-mist bg-white/60 p-5">
+            <h2 className="font-sans text-sm font-semibold text-ink">{mobility.name}</h2>
+            <p className="mt-2 font-sans text-sm leading-relaxed text-ink/70">{mobility.position}</p>
+            <ul className="mt-3 space-y-2">
+              {mobility.cues.map((cue) => (
+                <li key={cue} className="font-sans text-sm text-ink/70">
+                  • {cue}
+                </li>
+              ))}
+            </ul>
+            {mobility.cameraNote && (
+              <p className="mt-4 rounded-xl bg-mist/60 px-3 py-2 font-sans text-xs leading-relaxed text-ink/60">
+                {mobility.cameraNote}
+              </p>
+            )}
+            <Link
+              href="/coach"
+              className="mt-4 inline-flex items-center justify-center rounded-xl bg-pine px-4 py-2.5 font-sans text-sm font-semibold text-paper transition hover:opacity-90"
+            >
+              Back to Coach
+            </Link>
+          </div>
+        </div>
       ) : isSupported ? (
         <PoseCoach />
       ) : (
@@ -64,9 +89,15 @@ export default async function CoachPage({
               className="flex items-center justify-between gap-3 rounded-xl border border-mist bg-white/60 px-4 py-3 transition hover:border-moss/40"
             >
               <span className="font-sans text-sm font-medium text-ink">{exercise.name}</span>
-              <span className="shrink-0 rounded-full bg-moss/15 px-2 py-1 font-sans text-[10px] font-semibold tracking-wide text-moss uppercase">
-                Coach
-              </span>
+              {exercise.hold ? (
+                <span className="shrink-0 rounded-full bg-moss/15 px-2 py-1 font-sans text-[10px] font-semibold tracking-wide text-moss uppercase">
+                  Coach
+                </span>
+              ) : (
+                <span className="shrink-0 rounded-full bg-mist px-2 py-1 font-sans text-[10px] font-semibold tracking-wide text-ink/40 uppercase">
+                  Cues only
+                </span>
+              )}
             </Link>
           ))}
         </div>
