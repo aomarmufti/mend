@@ -6,19 +6,19 @@ import type {
   NormalizedLandmark,
   PoseLandmarker as PoseLandmarkerType,
 } from "@mediapipe/tasks-vision";
-import {
-  LANDMARK,
-  jointAngle,
-  type Point,
-} from "@/components/coach/poseMath";
+import { LANDMARK, type Point } from "@/components/coach/poseMath";
 import {
   trackHold,
   initialHoldTracker,
-  moreLiftedSide,
+  evaluateSignal,
+  resolveInPosition,
+  initialReadability,
   DEFAULT_HOLD_CONFIG,
   type HoldTracker,
   type HoldCue,
   type HoldConfig,
+  type HoldSignal,
+  type ReadabilityTracker,
 } from "@/components/coach/holdMath";
 import { logExercise } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
@@ -32,22 +32,7 @@ const MODEL_URL =
 const CALIBRATION_FRAMES = 30;
 const UI_INTERVAL_MS = 100;
 
-/**
- * How a hold exercise decides "is the user in position right now". Two
- * shapes, chosen per exercise based on what the tracked joints actually see:
- *
- * - legExtension: a knee/hip angle band. Use this when the hands are not
- *   near the tracked joints, so angle tracking stays clean (confirmed
- *   against real footage for the single-leg active knee extension stretch).
- * - footLift: normalised ankle lift versus a calibrated baseline. Use this
- *   when the hands clasp near the hip or knee — verified against real
- *   footage that hip/knee angles become unreliable there (swinging by tens
- *   of degrees frame to frame at "confident" visibility), while the ankle,
- *   untouched by the hands, stays stable.
- */
-export type HoldSignal =
-  | { kind: "legExtension"; kneeMinDeg: number; hipMinDeg: number; hipMaxDeg: number }
-  | { kind: "footLift"; minLift: number };
+export type { HoldSignal };
 
 export interface HoldExerciseConfig {
   slug: string;
@@ -87,36 +72,6 @@ function torsoLengthOf(landmarks: NormalizedLandmark[], aspect: number): number 
   const b = correct(hip, aspect);
   const length = Math.hypot(a.x - b.x, a.y - b.y);
   return length > 0 ? length : null;
-}
-
-/** Evaluate the configured signal for one leg; returns null if not visible enough. */
-function legInPosition(
-  side: "left" | "right",
-  landmarks: NormalizedLandmark[],
-  aspect: number,
-  signal: HoldSignal,
-): { inPosition: boolean; kneeAngle: number | null } | null {
-  const hip = landmarks[side === "left" ? LANDMARK.leftHip : LANDMARK.rightHip];
-  const knee = landmarks[side === "left" ? LANDMARK.leftKnee : LANDMARK.rightKnee];
-  const ankle = landmarks[side === "left" ? LANDMARK.leftAnkle : LANDMARK.rightAnkle];
-  const shoulder = landmarks[side === "left" ? LANDMARK.leftShoulder : LANDMARK.rightShoulder];
-  if (!hip || !knee || !ankle) return null;
-  if (Math.min(visibilityOf(hip), visibilityOf(knee), visibilityOf(ankle)) < 0.5) return null;
-
-  const kneeAngle = jointAngle(correct(hip, aspect), correct(knee, aspect), correct(ankle, aspect));
-
-  if (signal.kind === "legExtension") {
-    if (!shoulder) return null;
-    const hipAngle = jointAngle(correct(shoulder, aspect), correct(hip, aspect), correct(knee, aspect));
-    const inPosition =
-      kneeAngle >= signal.kneeMinDeg && hipAngle >= signal.hipMinDeg && hipAngle <= signal.hipMaxDeg;
-    return { inPosition, kneeAngle };
-  }
-
-  // footLift: caller supplies the lift via moreLiftedSide separately, since it
-  // needs a calibrated baseline this function does not have. Angle is still
-  // reported for the on-screen readout.
-  return { inPosition: false, kneeAngle };
 }
 
 const CUE_COPY: Record<HoldCue, (targetSec: number, remainingReps: number) => string> = {
@@ -188,6 +143,11 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
   const calibSumsRef = useRef({ hipY: { left: 0, right: 0 }, ankleY: { left: 0, right: 0 }, torso: 0 });
 
   const holdTrackerRef = useRef<HoldTracker>(initialHoldTracker);
+  const readabilityRef = useRef<ReadabilityTracker>(initialReadability);
+  const lastReadingRef = useRef<{ side: "left" | "right" | null; kneeAngle: number | null }>({
+    side: null,
+    kneeAngle: null,
+  });
   const repsRef = useRef(0);
   const lastUiRef = useRef(0);
   const startedAtRef = useRef(0);
@@ -310,39 +270,27 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
         }
       }
 
-      let inPosition = false;
-      let kneeAngleDeg: number | null = null;
-      let drawSide: "left" | "right" | null = null;
+      // A frame the model cannot read is not the same as a frame where the
+      // user has let go: passing "can't see" through as "out of position"
+      // resets a legitimate hold every time a landmark flickers across its
+      // confidence threshold. resolveInPosition carries the last known state
+      // for a short grace period instead.
+      const reading = landmarks
+        ? evaluateSignal(landmarks, aspect, config.signal, b.ankleY, b.torsoLength)
+        : null;
+      const resolved = resolveInPosition(readabilityRef.current, reading, now);
+      readabilityRef.current = resolved.tracker;
+      const inPosition = resolved.inPosition;
 
-      if (landmarks && b.torsoLength) {
-        if (config.signal.kind === "legExtension") {
-          const left = legInPosition("left", landmarks, aspect, config.signal);
-          const right = legInPosition("right", landmarks, aspect, config.signal);
-          const candidate =
-            left && right
-              ? left.inPosition
-                ? { side: "left" as const, ...left }
-                : { side: "right" as const, ...right }
-              : left
-                ? { side: "left" as const, ...left }
-                : right
-                  ? { side: "right" as const, ...right }
-                  : null;
-          if (candidate) {
-            inPosition = candidate.inPosition;
-            kneeAngleDeg = candidate.kneeAngle;
-            drawSide = candidate.side;
-          }
-        } else {
-          const lifted = moreLiftedSide(landmarks, b.ankleY, b.torsoLength);
-          if (lifted) {
-            inPosition = lifted.lift >= config.signal.minLift;
-            drawSide = lifted.side;
-            const legCheck = legInPosition(lifted.side, landmarks, aspect, config.signal);
-            kneeAngleDeg = legCheck?.kneeAngle ?? null;
-          }
-        }
+      // Keep the overlay on the last leg we could read, so a flicker doesn't
+      // strobe the highlight off and back on again mid-hold.
+      if (reading) {
+        lastReadingRef.current = { side: reading.side, kneeAngle: reading.kneeAngle };
+      } else if (!resolved.inPosition) {
+        lastReadingRef.current = { side: null, kneeAngle: null };
       }
+      const { side: drawSide, kneeAngle: kneeAngleDeg } = lastReadingRef.current;
+
       activeSideRef.current = drawSide;
 
       const result = trackHold(holdTrackerRef.current, inPosition, now, holdConfig);
@@ -363,9 +311,10 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
           reps: repsRef.current,
           targetReps: config.targetReps,
           kneeAngleDeg,
-          message: landmarks
-            ? CUE_COPY[result.cue](holdConfig.minHoldMs / 1000, remaining)
-            : "Looking for you — make sure your whole body is in frame.",
+          message:
+            resolved.unreadable && !resolved.inPosition
+              ? "Looking for you — make sure your whole body is in frame."
+              : CUE_COPY[result.cue](holdConfig.minHoldMs / 1000, remaining),
         });
       }
     }

@@ -1,5 +1,5 @@
 import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
-import { LANDMARK } from "@/components/coach/poseMath";
+import { LANDMARK, jointAngle, type Point, type Side } from "@/components/coach/poseMath";
 
 /**
  * Generic pure logic for "get into position and hold" exercises (stretches),
@@ -182,4 +182,208 @@ export function moreLiftedSide(
   }
   if (candidates.length === 0) return null;
   return candidates.reduce((a, b) => (a.lift >= b.lift ? a : b));
+}
+
+// ---------------------------------------------------------------------------
+// Signals: the per-exercise definition of "in position", evaluated per frame.
+// ---------------------------------------------------------------------------
+
+/** An open-ended range. Omit an end to leave it unbounded. */
+export interface AngleBand {
+  min?: number;
+  max?: number;
+}
+
+export type HoldSignal =
+  /**
+   * One leg's knee and/or hip angle inside a band. Covers most floor and
+   * standing stretches where the hands stay clear of the tracked joints:
+   * a hamstring stretch wants the knee straight (knee min), a knee hug wants
+   * the hip deeply flexed (hip max), a quad stretch wants both (knee max to
+   * fold the heel in, hip min to keep the thigh pointing down).
+   */
+  | { kind: "jointBand"; knee?: AngleBand; hip?: AngleBand }
+  /**
+   * Normalised ankle lift against a calibrated baseline. For exercises where
+   * the hands clasp near the hip or knee and wreck angle tracking there.
+   */
+  | { kind: "footLift"; minLift: number }
+  /**
+   * A standing split stance holding the back leg straight — a calf stretch.
+   * Needs both legs at once: how far apart the feet are, and whether the
+   * back (straighter) leg has stayed extended rather than collapsing.
+   */
+  | { kind: "splitStance"; backKneeMin: number; minSeparation: number };
+
+export interface SignalReading {
+  inPosition: boolean;
+  /** Leg the overlay should highlight, when the signal tracks one. */
+  side: Side | null;
+  kneeAngle: number | null;
+  hipAngle: number | null;
+}
+
+function visible(p: NormalizedLandmark | undefined): p is NormalizedLandmark {
+  return !!p && (typeof p.visibility !== "number" || p.visibility >= 0.5);
+}
+
+function correct(p: NormalizedLandmark, aspect: number): Point {
+  return { x: p.x * aspect, y: p.y };
+}
+
+function within(value: number, band?: AngleBand): boolean {
+  if (!band) return true;
+  if (band.min !== undefined && value < band.min) return false;
+  if (band.max !== undefined && value > band.max) return false;
+  return true;
+}
+
+interface LegAngles {
+  side: Side;
+  knee: number;
+  hip: number;
+  ankle: NormalizedLandmark;
+}
+
+/** Knee and hip angle for one leg, or null when its landmarks are not confidently seen. */
+export function legAngles(
+  landmarks: NormalizedLandmark[],
+  side: Side,
+  aspect: number,
+): LegAngles | null {
+  const i =
+    side === "left"
+      ? { sh: LANDMARK.leftShoulder, hip: LANDMARK.leftHip, knee: LANDMARK.leftKnee, ankle: LANDMARK.leftAnkle }
+      : { sh: LANDMARK.rightShoulder, hip: LANDMARK.rightHip, knee: LANDMARK.rightKnee, ankle: LANDMARK.rightAnkle };
+
+  const shoulder = landmarks[i.sh];
+  const hip = landmarks[i.hip];
+  const knee = landmarks[i.knee];
+  const ankle = landmarks[i.ankle];
+  if (!visible(shoulder) || !visible(hip) || !visible(knee) || !visible(ankle)) return null;
+
+  return {
+    side,
+    knee: jointAngle(correct(hip, aspect), correct(knee, aspect), correct(ankle, aspect)),
+    hip: jointAngle(correct(shoulder, aspect), correct(hip, aspect), correct(knee, aspect)),
+    ankle,
+  };
+}
+
+/**
+ * Evaluate the configured signal against one frame. Returns null when the
+ * body cannot be read confidently enough to judge, so the caller can hold
+ * the previous state rather than treating "can't see" as "out of position".
+ */
+export function evaluateSignal(
+  landmarks: NormalizedLandmark[],
+  aspect: number,
+  signal: HoldSignal,
+  baselines: { left: number | null; right: number | null },
+  torsoLength: number | null,
+): SignalReading | null {
+  const legs = [legAngles(landmarks, "left", aspect), legAngles(landmarks, "right", aspect)].filter(
+    (l): l is LegAngles => l !== null,
+  );
+
+  if (signal.kind === "jointBand") {
+    if (legs.length === 0) return null;
+    const matching = legs.find((l) => within(l.knee, signal.knee) && within(l.hip, signal.hip));
+    const chosen = matching ?? legs[0];
+    return {
+      inPosition: matching !== undefined,
+      side: chosen.side,
+      kneeAngle: chosen.knee,
+      hipAngle: chosen.hip,
+    };
+  }
+
+  if (signal.kind === "footLift") {
+    if (torsoLength === null) return null;
+    const lifted = moreLiftedSide(landmarks, baselines, torsoLength);
+    if (!lifted) return null;
+    const leg = legs.find((l) => l.side === lifted.side);
+    return {
+      inPosition: lifted.lift >= signal.minLift,
+      side: lifted.side,
+      kneeAngle: leg?.knee ?? null,
+      hipAngle: leg?.hip ?? null,
+    };
+  }
+
+  // splitStance. The stance width only needs the two ankles; the knee check
+  // only needs the back leg's own chain. Requiring a full confident chain on
+  // *both* legs is too strict: measured in a side-on standing clip, the far
+  // knee flickers between 0.47 and 0.55 visibility — across the threshold —
+  // while shoulders, hips and the near leg all sit at 0.93–1.00. Demanding
+  // both dropped the reading for a second at a time and reset live holds.
+  const leftAnkle = landmarks[LANDMARK.leftAnkle];
+  const rightAnkle = landmarks[LANDMARK.rightAnkle];
+  if (!visible(leftAnkle) || !visible(rightAnkle) || legs.length === 0) return null;
+
+  const separation = Math.abs(leftAnkle.x - rightAnkle.x) * aspect;
+  // The back leg is the straighter one. If only the front leg is readable its
+  // knee is bent, so this reads as out of position — a false negative rather
+  // than a false pass, which is the safe way round to be wrong.
+  const back = legs.reduce((a, b) => (a.knee >= b.knee ? a : b));
+  return {
+    inPosition: separation >= signal.minSeparation && back.knee >= signal.backKneeMin,
+    side: back.side,
+    kneeAngle: back.knee,
+    hipAngle: back.hip,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Readability: telling "out of position" apart from "can't see right now".
+// ---------------------------------------------------------------------------
+
+/**
+ * How long an unreadable body is treated as still holding whatever it was
+ * last doing. Long enough to ride out a landmark flickering across its
+ * confidence threshold; short enough that walking out of frame mid-hold
+ * cannot bank a rep the user never earned.
+ */
+export const UNREADABLE_GRACE_MS = 1_000;
+
+export interface ReadabilityTracker {
+  lastInPosition: boolean;
+  unreadableSince: number | null;
+}
+
+export const initialReadability: ReadabilityTracker = {
+  lastInPosition: false,
+  unreadableSince: null,
+};
+
+/**
+ * Turn a possibly-null signal reading into the boolean trackHold needs.
+ *
+ * A null reading means the body could not be read confidently — which is not
+ * the same as being out of position, and must not be passed on as `false`.
+ * Doing that resets a legitimate hold every time a landmark dips below its
+ * confidence threshold. Instead the last known state carries for a short
+ * grace period, then falls back to out-of-position so an unreadable camera
+ * can never quietly complete a rep.
+ */
+export function resolveInPosition(
+  tracker: ReadabilityTracker,
+  reading: SignalReading | null,
+  now: number,
+): { tracker: ReadabilityTracker; inPosition: boolean; unreadable: boolean } {
+  if (reading) {
+    return {
+      tracker: { lastInPosition: reading.inPosition, unreadableSince: null },
+      inPosition: reading.inPosition,
+      unreadable: false,
+    };
+  }
+
+  const since = tracker.unreadableSince ?? now;
+  const withinGrace = now - since < UNREADABLE_GRACE_MS;
+  return {
+    tracker: { ...tracker, unreadableSince: since },
+    inPosition: withinGrace ? tracker.lastInPosition : false,
+    unreadable: true,
+  };
 }
