@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 import Link from "next/link";
 import { DEFAULT_CONDITION_SLUG, getCondition } from "@/data/conditions";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
+import { getMobilityForCondition } from "@/data/mobilityExercises";
 
 const noopSubscribe = () => () => {};
 
@@ -53,34 +54,65 @@ export function ProgrammeGate({ children }: { children: React.ReactNode }) {
 
   if (condition.programme) return <>{children}</>;
 
+  const stretches = getMobilityForCondition(condition.slug);
+
   return (
-    <div className="rounded-2xl border border-mist bg-white/60 p-5">
-      <h2 className="font-sans text-sm font-semibold text-ink">
-        {condition.name} — programme in development
-      </h2>
-      <p className="mt-2 font-sans text-sm leading-relaxed text-ink/65">
-        {condition.summary}
-      </p>
-      <p className="mt-3 font-sans text-sm leading-relaxed text-ink/65">
-        We only ship exercise programmes transcribed from a clinical source.
-        This one has not been sourced yet, so there is nothing here to
-        prescribe — inventing sets and reps for a rehab protocol would be worse
-        than showing you nothing.
-      </p>
-      <div className="mt-4 flex flex-col gap-2">
-        <Link
-          href="/coach"
-          className="flex items-center justify-center rounded-xl bg-pine py-3 font-sans text-sm font-semibold text-paper transition hover:opacity-90"
-        >
-          Try the camera coach anyway
-        </Link>
+    <div className="space-y-3">
+      <div className="rounded-2xl border border-mist bg-white/60 p-5">
+        <h2 className="font-sans text-sm font-semibold text-ink">
+          {condition.name} — programme in development
+        </h2>
+        <p className="mt-2 font-sans text-sm leading-relaxed text-ink/65">
+          {condition.summary}
+        </p>
+        <p className="mt-3 font-sans text-sm leading-relaxed text-ink/65">
+          We only ship exercise programmes transcribed from a clinical source.
+          This one has not been sourced yet, so there is nothing here to
+          prescribe — inventing sets and reps for a rehab protocol would be
+          worse than showing you nothing.
+        </p>
         <Link
           href="/start/knee"
-          className="flex items-center justify-center rounded-xl border border-mist py-3 font-sans text-sm font-semibold text-pine transition hover:bg-white"
+          className="mt-4 flex items-center justify-center rounded-xl border border-mist py-3 font-sans text-sm font-semibold text-pine transition hover:bg-white"
         >
           Switch to a ready programme
         </Link>
       </div>
+
+      {stretches.length > 0 && (
+        <div className="rounded-2xl border border-mist bg-white/60 p-5">
+          <h2 className="font-sans text-sm font-semibold text-ink">
+            General mobility work for this area
+          </h2>
+          <p className="mt-2 font-sans text-sm leading-relaxed text-ink/65">
+            Stretches the camera can coach you through, relevant to this area.
+            These are not a prescription and not a substitute for the
+            programme — no sets, no progression, just a hold the coach can
+            check your form on.
+          </p>
+          <div className="mt-4 space-y-2">
+            {stretches.map((exercise) => (
+              <Link
+                key={exercise.slug}
+                href={`/coach?exercise=${exercise.slug}`}
+                className="flex items-center justify-between gap-3 rounded-xl border border-mist bg-paper px-4 py-3 transition hover:border-moss/40"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate font-sans text-sm font-medium text-ink">
+                    {exercise.name}
+                  </span>
+                  <span className="block font-sans text-xs text-ink/50">
+                    {exercise.dosage}
+                  </span>
+                </span>
+                <span className="shrink-0 font-sans text-xs font-semibold text-pine">
+                  Start →
+                </span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
