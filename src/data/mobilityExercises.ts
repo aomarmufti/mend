@@ -6,7 +6,12 @@ import type { HoldExerciseConfig } from "@/components/coach/HoldCoach";
  * every entry in it must trace back to that one source. These do not: they
  * come from footage filmed directly by the person building this app, so
  * folding them into that array would misrepresent their provenance.
- * Condition/programme assignment is still pending a decision.
+ *
+ * `conditions` lists the conditions each stretch is offered under. This is NOT
+ * a prescribed protocol: it is general mobility work relevant to the area,
+ * surfaced for conditions that have no sourced programme so they are not a
+ * dead end. The distinction matters and the UI states it — sets, reps and
+ * progressions still only come from a clinical source.
  *
  * `hold` is null where the movement cannot be tracked from a phone camera —
  * see `cameraNote` for why. Those still show their cues and a plain timer
@@ -19,12 +24,17 @@ export interface MobilityExercise {
   dosage: string;
   cues: string[];
   hold: HoldExerciseConfig | null;
+  /** Condition slugs this stretch is offered under. See the note above. */
+  conditions: string[];
   cameraNote?: string;
   /** Where the reference footage and cues came from, for the same traceability the sourced programme has. */
   provenance: string;
 }
 
 const FILMED = "Filmed reference, September 2026. Thresholds measured from that footage — one clip, one person, not clinically validated.";
+
+/** One hold length across the set, so the coach behaves the same everywhere. */
+const HOLD_MS = 15_000;
 
 export const mobilityExercises: MobilityExercise[] = [
   {
@@ -46,9 +56,10 @@ export const mobilityExercises: MobilityExercise[] = [
       // behind the thigh, clear of the hip and knee landmarks.
       signal: { kind: "jointBand", knee: { min: 155 }, hip: { min: 70, max: 100 } },
       targetReps: 3,
-      hold: { minHoldMs: 15_000 },
+      hold: { minHoldMs: HOLD_MS },
       setupHint: "Lie on your back, side-on to the camera, with your whole body in frame.",
     },
+    conditions: ["non-specific-low-back-pain", "lumbar-radiculopathy", "knee-osteoarthritis"],
     provenance: FILMED,
   },
   {
@@ -72,9 +83,10 @@ export const mobilityExercises: MobilityExercise[] = [
       // and tracks far more cleanly, so this gates on foot lift instead.
       signal: { kind: "footLift", minLift: 0.28 },
       targetReps: 3,
-      hold: { minHoldMs: 15_000 },
+      hold: { minHoldMs: HOLD_MS },
       setupHint: "Lie on your back, side-on to the camera, with your whole body in frame.",
     },
+    conditions: ["non-specific-low-back-pain", "hip-osteoarthritis"],
     provenance: FILMED,
   },
   {
@@ -97,32 +109,40 @@ export const mobilityExercises: MobilityExercise[] = [
       // and constraining both would reject valid variations in leg position.
       signal: { kind: "jointBand", hip: { max: 60 } },
       targetReps: 3,
-      hold: { minHoldMs: 15_000 },
+      hold: { minHoldMs: HOLD_MS },
       setupHint: "Lie on your back, side-on to the camera, with your whole body in frame.",
     },
+    conditions: ["non-specific-low-back-pain", "lumbar-radiculopathy"],
     provenance: FILMED,
   },
   {
     slug: "lumbar-rolling-stretch",
     name: "Lumbar Rolling Stretch",
     position:
-      "Lying on your back with knees bent and feet flat on the floor. Keeping your shoulders flat, roll both knees out to one side and hold, then bring them back to the middle and repeat to the other side.",
-    dosage: "Hold each side · alternate sides",
+      "Lying on your back with knees bent and feet flat on the floor. Keeping your shoulders flat, let both knees roll a little way over to one side and hold, then bring them back to the middle and roll to the other side.",
+    dosage: "Hold 15s each side · alternate sides",
     cues: [
-      "Keep your lower back grounded — only roll as far as you can without it lifting off the floor.",
+      "A small movement is the whole exercise — roll only as far as your lower back stays grounded.",
       "Shoulders stay flat throughout; the movement comes from the hips and lower back.",
-      "You may feel the stretch through the hips as well as the lower back.",
+      "Knees stay together, and come back through the middle before rolling the other way.",
     ],
-    // Deliberately untracked. Rolling the knees side to side is movement along
-    // the camera's depth axis: filmed side-on, the two knees project onto the
-    // same point (measured left/right knee separation stayed at 0.000–0.004
-    // for an entire clip) and the far knee's visibility sits at 0.39–0.45,
-    // below the threshold the app trusts. A camera placed at the feet, looking
-    // up the body, would turn the roll into clear left/right movement and make
-    // this trackable.
-    hold: null,
-    cameraNote:
-      "Camera coaching isn't available for this one yet. Rolling side to side moves toward and away from a side-on camera, so it can't see the movement — it would need filming from the feet instead.",
+    hold: {
+      slug: "lumbar-rolling-stretch",
+      name: "Lumbar Rolling Stretch",
+      // Knee separation is the obvious measurement and the wrong one: the roll
+      // runs along a side-on camera's depth axis, so both knees project onto
+      // the same point (0.000–0.004 apart for a whole clip). What the camera
+      // does see is the knees dropping as they roll. Measured across two rolls
+      // in the reference clip: knees up and neutral sits at -0.60 torso
+      // lengths, rolled reaches -0.48 to -0.39. -0.52 splits them with margin
+      // on both sides, and it catches the roll about a third of a second after
+      // the movement visibly starts.
+      signal: { kind: "kneeRoll", maxKneeHeight: -0.52 },
+      targetReps: 4,
+      hold: { minHoldMs: HOLD_MS },
+      setupHint: "Lie on your back, side-on to the camera, with your whole body in frame.",
+    },
+    conditions: ["non-specific-low-back-pain", "lumbar-radiculopathy"],
     provenance: FILMED,
   },
   {
@@ -145,9 +165,10 @@ export const mobilityExercises: MobilityExercise[] = [
       // stepping into the stance is what starts the timer.
       signal: { kind: "splitStance", backKneeMin: 165, minSeparation: 0.13 },
       targetReps: 3,
-      hold: { minHoldMs: 15_000 },
+      hold: { minHoldMs: HOLD_MS },
       setupHint: "Stand side-on to the camera with your whole body and both feet in frame.",
     },
+    conditions: ["achilles-tendinopathy", "plantar-fasciitis"],
     provenance: FILMED,
   },
   {
@@ -172,13 +193,19 @@ export const mobilityExercises: MobilityExercise[] = [
       // the noisiest of the tracked set.
       signal: { kind: "jointBand", knee: { max: 80 }, hip: { min: 155 } },
       targetReps: 3,
-      hold: { minHoldMs: 15_000 },
+      hold: { minHoldMs: HOLD_MS },
       setupHint: "Stand side-on to the camera with your whole body in frame.",
     },
+    conditions: ["patellofemoral-pain-syndrome", "knee-osteoarthritis"],
     provenance: FILMED,
   },
 ];
 
 export function getMobilityExercise(slug: string): MobilityExercise | undefined {
   return mobilityExercises.find((e) => e.slug === slug);
+}
+
+/** Stretches offered under a condition. Not a prescribed protocol — see the note above. */
+export function getMobilityForCondition(conditionSlug: string): MobilityExercise[] {
+  return mobilityExercises.filter((e) => e.conditions.includes(conditionSlug));
 }
