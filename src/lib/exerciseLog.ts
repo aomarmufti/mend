@@ -26,6 +26,8 @@ export interface ExerciseRecord {
    *  camera counting it. Kept distinct so the history never presents a claim
    *  as a measurement. */
   selfReported?: boolean;
+  /** Of `reps`, how many were held short of the target and counted anyway. */
+  partialReps?: number;
 }
 
 // Deliberately NOT toISOString().slice(0, 10) — that is the UTC calendar date,

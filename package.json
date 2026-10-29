@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx tests/repCounting.test.mjs",
+    "test": "tsx tests/repCounting.test.mjs && tsx tests/formQuality.test.mjs",
     "calibrate": "node scripts/calibrate.mjs"
   },
   "dependencies": {

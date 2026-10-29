@@ -97,13 +97,30 @@ const REP_CUE_COPY: Record<RepCue, (remaining: number) => string> = {
   tooFast: () => "Not quite far enough — go a little deeper.",
 };
 
-const CUE_COPY: Record<HoldCue, (targetSec: number, remainingReps: number) => string> = {
+interface CueContext {
+  targetSec: number;
+  remaining: number;
+  /** Seconds actually held on the set that just banked. */
+  lastSetSec: number;
+}
+
+const CUE_COPY: Record<HoldCue, (c: CueContext) => string> = {
   seek: () => "Get into position to begin.",
   holding: () => "Hold…",
   nearly: () => "Nearly there — hold it.",
-  banked: (_t, remaining) =>
-    remaining > 0 ? "Rep complete! Release, then get set for the next one." : "Last rep complete — nice work.",
-  "released-early": () => "So close — try to hold a little longer next time.",
+  banked: ({ targetSec, remaining }) =>
+    remaining > 0
+      ? `Good job — full ${targetSec} seconds. Release, then set up the next one.`
+      : `Good job — full ${targetSec} seconds. That's the set done.`,
+  // Counted, and honest about what was counted. Saying "well done" for nine
+  // seconds of fifteen would be the same dishonesty as a fabricated streak,
+  // just smaller.
+  "banked-partial": ({ lastSetSec, targetSec, remaining }) =>
+    remaining > 0
+      ? `Counted — you held ${lastSetSec}s of ${targetSec}s, so that's a partial set. Next one when you're ready.`
+      : `Counted — ${lastSetSec}s of ${targetSec}s, a partial set. That's the last one.`,
+  "released-early": ({ targetSec }) =>
+    `That was too short to count — aim for at least a few seconds, ideally the full ${targetSec}.`,
 };
 
 interface UiState {
@@ -113,6 +130,10 @@ interface UiState {
   reps: number;
   targetReps: number;
   kneeAngleDeg: number | null;
+  /** Live 0-100 match against the target position. */
+  form: number | null;
+  /** Sets banked short of the target, of `reps`. */
+  partials: number;
   message: string;
 }
 
@@ -124,6 +145,8 @@ function initialUi(cfg: HoldExerciseConfig): UiState {
     reps: 0,
     targetReps: cfg.targetReps,
     kneeAngleDeg: null,
+    form: null,
+    partials: 0,
     message: cfg.setupHint,
   };
 }
@@ -173,6 +196,14 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
     kneeAngle: null,
   });
   const repsRef = useRef(0);
+  const partialsRef = useRef(0);
+  const lastSetMsRef = useRef(0);
+  // Exponential moving average: the raw per-frame score jitters with the
+  // landmarks, and a percentage that flickers ten points a frame reads as
+  // broken rather than precise.
+  const formRef = useRef<number | null>(null);
+  const formSumRef = useRef(0);
+  const formCountRef = useRef(0);
   const lastUiRef = useRef(0);
   const startedAtRef = useRef(0);
   const activeSideRef = useRef<"left" | "right" | null>(null);
@@ -311,6 +342,16 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
       const reading = landmarks
         ? evaluateSignal(landmarks, aspect, config.signal, b.ankleY, b.torsoLength)
         : null;
+      if (reading) {
+        // 0.82 old / 0.18 new: settles within about a second of real change
+        // while absorbing single-frame landmark jitter.
+        formRef.current =
+          formRef.current === null
+            ? reading.quality
+            : formRef.current * 0.82 + reading.quality * 0.18;
+        formSumRef.current += reading.quality;
+        formCountRef.current += 1;
+      }
       const resolved = resolveInPosition(readabilityRef.current, reading, now);
       readabilityRef.current = resolved.tracker;
       const inPosition = resolved.inPosition;
@@ -329,15 +370,33 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
       // Both modes read the same in-position boolean; only the banking rule
       // differs. `result` is normalised so everything downstream — voice,
       // drawing, the UI — stays mode-agnostic.
-      let result: { cue: HoldCue | RepCue; repBanked: boolean; elapsedMs: number };
+      let result: {
+        cue: HoldCue | RepCue;
+        repBanked: boolean;
+        elapsedMs: number;
+        partial: boolean;
+        bankedMs: number;
+      };
       if (isReps) {
         const r = trackReps(repTrackerRef.current, inPosition, now, repConfig);
         repTrackerRef.current = r.tracker;
-        result = { cue: r.cue, repBanked: r.repBanked, elapsedMs: r.inZoneMs };
+        result = {
+          cue: r.cue,
+          repBanked: r.repBanked,
+          elapsedMs: r.inZoneMs,
+          partial: false,
+          bankedMs: 0,
+        };
       } else {
         const h = trackHold(holdTrackerRef.current, inPosition, now, holdConfig);
         holdTrackerRef.current = h.tracker;
-        result = { cue: h.cue, repBanked: h.repBanked, elapsedMs: h.elapsedMs };
+        result = {
+          cue: h.cue,
+          repBanked: h.repBanked,
+          elapsedMs: h.elapsedMs,
+          partial: h.partial,
+          bankedMs: h.bankedMs,
+        };
       }
 
       // ---- spoken feedback -------------------------------------------------
@@ -380,8 +439,19 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
         // discards honest work once the user passes it, and the recorded
         // number has to match what the person did.
         repsRef.current += 1;
+        if (result.partial) partialsRef.current += 1;
+        lastSetMsRef.current = result.bankedMs;
         if (voiceOnRef.current) {
-          VOICE.repBanked(repsRef.current, Math.max(0, config.targetReps - repsRef.current));
+          const remaining = Math.max(0, config.targetReps - repsRef.current);
+          if (result.partial) {
+            VOICE.partialSet(
+              Math.round(result.bankedMs / 1000),
+              Math.round(holdConfig.minHoldMs / 1000),
+              remaining,
+            );
+          } else {
+            VOICE.repBanked(repsRef.current, remaining);
+          }
         }
         spokenCountRef.current = null;
       }
@@ -398,12 +468,18 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
           reps: repsRef.current,
           targetReps: config.targetReps,
           kneeAngleDeg,
+          form: formRef.current === null ? null : Math.round(formRef.current),
+          partials: partialsRef.current,
           message:
             resolved.unreadable && !resolved.inPosition
               ? "Looking for you — make sure your whole body is in frame."
               : isReps
                 ? REP_CUE_COPY[result.cue as RepCue](remaining)
-                : CUE_COPY[result.cue as HoldCue](holdConfig.minHoldMs / 1000, remaining),
+                : CUE_COPY[result.cue as HoldCue]({
+                    targetSec: Math.round(holdConfig.minHoldMs / 1000),
+                    remaining,
+                    lastSetSec: Math.round(lastSetMsRef.current / 1000),
+                  }),
         });
       }
     }
@@ -450,7 +526,10 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
       reps: repsRef.current,
       sets: 1,
       durationMs: startedAtRef.current ? Date.now() - startedAtRef.current : 0,
-      avgScore: null,
+      avgScore: formCountRef.current
+        ? Math.round(formSumRef.current / formCountRef.current)
+        : null,
+      partialReps: partialsRef.current || undefined,
     });
     if (repsRef.current > 0) markCompletedToday();
     if (onFinish) onFinish({ reps: repsRef.current });
@@ -465,7 +544,8 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
       : 0;
 
   const good = ui.cue === "banked" || ui.cue === "counted" || ui.cue === "holding";
-  const warn = ui.cue === "nearly" || ui.cue === "descending";
+  const warn =
+    ui.cue === "nearly" || ui.cue === "descending" || ui.cue === "banked-partial";
   const bad = ui.cue === "released-early" || ui.cue === "tooFast";
   const cueClass = good
     ? "bg-moss/10 text-moss"
@@ -553,18 +633,45 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <div className="rounded-xl bg-paper px-3 py-2.5 text-center">
-            <p className="font-mono text-xl font-semibold text-pine">{ui.reps}</p>
-            <p className="font-sans text-[11px] text-ink/55">Reps complete</p>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <div className="rounded-xl bg-paper px-2 py-2.5 text-center">
+            <p className="font-mono text-xl font-semibold text-pine">
+              {ui.reps}
+              {ui.partials > 0 && (
+                <span className="font-sans text-[10px] font-medium text-amber">
+                  {" "}
+                  {ui.partials}p
+                </span>
+              )}
+            </p>
+            <p className="font-sans text-[11px] text-ink/55">
+              {isReps ? "Reps" : "Sets"} done
+            </p>
           </div>
-          <div className="rounded-xl bg-paper px-3 py-2.5 text-center">
+          <div className="rounded-xl bg-paper px-2 py-2.5 text-center">
+            <p
+              className={`font-mono text-xl font-semibold ${
+                ui.form === null
+                  ? "text-ink/35"
+                  : ui.form >= 85
+                    ? "text-moss"
+                    : ui.form >= 60
+                      ? "text-amber"
+                      : "text-coral"
+              }`}
+            >
+              {ui.form === null ? "–" : ui.form}
+              {ui.form !== null && <span className="text-xs text-ink/45">%</span>}
+            </p>
+            <p className="font-sans text-[11px] text-ink/55">Form</p>
+          </div>
+          <div className="rounded-xl bg-paper px-2 py-2.5 text-center">
             <p className="font-mono text-xl font-semibold text-pine">
               {isReps ? ui.targetReps : ui.targetSec}
               {!isReps && <span className="text-xs text-ink/50">s</span>}
             </p>
             <p className="font-sans text-[11px] text-ink/55">
-              {isReps ? "Target reps" : "Target hold"}
+              {isReps ? "Target" : "Target hold"}
             </p>
           </div>
         </div>

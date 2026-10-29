@@ -118,7 +118,9 @@ export function SessionHistory() {
                     <p className="mt-0.5 font-mono text-[11px] text-ink/55">
                       {r.selfReported
                         ? `Marked done · ${formatDuration(r.durationMs)}`
-                        : `${r.reps} reps counted · ${formatDuration(r.durationMs)}`}
+                        : `${r.reps} counted${
+                            r.partialReps ? ` (${r.partialReps} partial)` : ""
+                          } · ${formatDuration(r.durationMs)}`}
                     </p>
                   </div>
                 ))}

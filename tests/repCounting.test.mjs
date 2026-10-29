@@ -5,10 +5,10 @@
 // Run with: npm test
 
 import { trackHold, initialHoldTracker, resolveInPosition, initialReadability } from '../src/components/coach/holdMath.ts';
-const CFG = { minHoldMs: 15000, graceMs: 600, nearlyThereMs: 3000 };
+const CFG = { minHoldMs: 15000, graceMs: 600, nearlyThereMs: 3000, minPartialMs: 5000 };
 
 function run(frames) {               // frames: [inPositionOrNull, ms] steps at 33ms
-  let h = initialHoldTracker, r = initialReadability, reps = 0, t = 0;
+  let h = initialHoldTracker, r = initialReadability, reps = 0, partials = 0, t = 0;
   for (const [signal, dur] of frames) {
     for (let e = 0; e < dur; e += 33) {
       t += 33;
@@ -16,29 +16,35 @@ function run(frames) {               // frames: [inPositionOrNull, ms] steps at 
       r = res.tracker;
       const out = trackHold(h, res.inPosition, t, CFG);
       h = out.tracker;
-      if (out.repBanked) reps += 1;
+      if (out.repBanked) { reps += 1; if (out.partial) partials += 1; }
     }
   }
-  return reps;
+  return { reps, partials };
 }
+// [name, frames, expected total sets, expected partial sets]
 const cases = [
-  ['3 clean 16s holds, released between',        [[false,1000],[true,16000],[false,1000],[true,16000],[false,1000],[true,16000]], 3],
-  ['held 14.5s then released — must NOT count',  [[false,500],[true,14500],[false,2000]], 0],
-  ['one 50s hold is ONE rep, not three',         [[false,500],[true,50000]], 1],
-  ['300ms sensor dropout mid-hold is forgiven',  [[false,500],[true,8000],[false,300],[true,8000]], 1],
-  ['1s genuine release mid-hold resets it',      [[false,500],[true,8000],[false,1000],[true,8000],[false,500]], 0],
-  ['unreadable >1s cannot bank a rep',           [[false,500],[true,10000],[null,6000]], 0],
-  ['unreadable <1s mid-hold is carried',         [[false,500],[true,14000],[null,900],[true,1000]], 1],
-  ['5 holds when target is 3 — counts all 5',    [[false,500],...Array(5).fill([[true,16000],[false,1000]]).flat()], 5],
+  ['3 clean 16s holds, released between',        [[false,1000],[true,16000],[false,1000],[true,16000],[false,1000],[true,16000]], 3, 0],
+  ['one 50s hold is ONE set, not three',         [[false,500],[true,50000]], 1, 0],
+  ['300ms sensor dropout mid-hold is forgiven',  [[false,500],[true,8000],[false,300],[true,8000]], 1, 0],
+  ['unreadable >1s banks partial, never full',   [[false,500],[true,10000],[null,6000]], 1, 1],
+  ['unreadable <1s mid-hold is carried',         [[false,500],[true,14000],[null,900],[true,1000]], 1, 0],
+  ['5 holds when target is 3 — counts all 5',    [[false,500],...Array(5).fill([[true,16000],[false,1000]]).flat()], 5, 0],
+  // Partial credit: switching legs early still counts, and is flagged.
+  ['14.5s then released — counts, partial',      [[false,500],[true,14500],[false,2000]], 1, 1],
+  ['9s then switched legs — counts, partial',    [[false,500],[true,9000],[false,2000]], 1, 1],
+  ['two short holds — two partial sets',         [[false,500],[true,8000],[false,1000],[true,8000],[false,1000]], 2, 2],
+  // Below minPartialMs is a drop-out, not a set.
+  ['3s then released — too short to count',      [[false,500],[true,3000],[false,2000]], 0, 0],
+  ['grace window is not extra credit',           [[false,500],[true,4600],[false,2000]], 0, 0],
 ];
 let pass = 0;
-for (const [name, frames, expect] of cases) {
+for (const [name, frames, expect, expectPartial] of cases) {
   const got = run(frames);
-  const ok = got === expect;
+  const ok = got.reps === expect && got.partials === expectPartial;
   if (ok) pass++;
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name.padEnd(46)} expected ${expect}, got ${got}`);
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name.padEnd(44)} expected ${expect}/${expectPartial}p, got ${got.reps}/${got.partials}p`);
 }
-console.log(`\n${pass}/${cases.length} rep-counting cases pass`);
+console.log(`\n${pass}/${cases.length} hold-counting cases pass`);
 if (pass !== cases.length) process.exitCode = 1;
 
 // ---------------------------------------------------------------------------

@@ -100,13 +100,21 @@ export const VOICE = {
     buzz(120);
     speak(
       remaining > 0
-        ? `Rep ${repNumber} done. Release, then get set for the next one.`
-        : `Rep ${repNumber} done. That's the set — nice work.`,
+        ? `Good job. Full hold. Release, then get set for the next one.`
+        : `Good job. Full hold — that's the set done.`,
     );
   },
   releasedEarly: () => {
     tone(320, 220);
     speak("Lost the position. Get back into it when you're ready.");
+  },
+  partialSet: (heldSec: number, targetSec: number, remaining: number) => {
+    tone(760, 150);
+    buzz(90);
+    speak(
+      `Counted. You held ${heldSec} of ${targetSec} seconds, so that's a partial set.` +
+        (remaining > 0 ? " Next one when you're ready." : " That's the last one."),
+    );
   },
   notDeepEnough: () => {
     tone(320, 160);
