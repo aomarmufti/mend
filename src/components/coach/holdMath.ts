@@ -261,6 +261,14 @@ export type HoldSignal =
   | {
       kind: "splitStance";
       backKneeMin: number;
+      /**
+       * How far apart the feet must be, as a fraction of torso length.
+       *
+       * Body-relative, not frame-relative: a stance measured as a fraction of
+       * the frame shrinks as the user steps back from the camera, so a
+       * frame-relative threshold silently encodes the distance it was filmed
+       * at and rejects the same correct stretch performed further away.
+       */
       minSeparation: number;
       /** Lunges also need the FRONT knee bent, not just the back leg straight. */
       frontKneeMax?: number;
@@ -544,8 +552,15 @@ export function evaluateSignal(
   const leftAnkle = landmarks[LANDMARK.leftAnkle];
   const rightAnkle = landmarks[LANDMARK.rightAnkle];
   if (!visible(leftAnkle) || !visible(rightAnkle) || legs.length === 0) return null;
+  if (torsoLength === null) return null;
 
-  const separation = Math.abs(leftAnkle.x - rightAnkle.x) * aspect;
+  // Divided by torso length, like every other ratio signal here. Measured in
+  // the frame alone this was the one threshold that moved with the user's
+  // distance from the camera: a held calf stretch filmed head-to-toe reads
+  // 0.12-0.16 of the frame, but the same stretch two steps further back reads
+  // under 0.10 and was rejected outright. That is the "sometimes works"
+  // failure — the stretch was right and the yardstick was wrong.
+  const separation = (Math.abs(leftAnkle.x - rightAnkle.x) * aspect) / torsoLength;
   // The back leg is the straighter one. If only the front leg is readable its
   // knee is bent, so this reads as out of position — a false negative rather
   // than a false pass, which is the safe way round to be wrong.
