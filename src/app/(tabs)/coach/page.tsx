@@ -67,7 +67,7 @@ export default async function CoachPage({
           </div>
         </div>
       ) : mobility?.hold ? (
-        <HoldCoach config={mobility.hold} />
+        <HoldCoach config={mobility.hold} reference={mobility.reference} />
       ) : mobility ? (
         <div className="px-5 pt-6">
           <div className="rounded-2xl border border-mist bg-white/60 p-5">
