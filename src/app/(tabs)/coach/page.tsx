@@ -3,6 +3,8 @@ import { PoseCoach } from "@/components/coach/PoseCoach";
 import { HoldCoach } from "@/components/coach/HoldCoach";
 import { getExerciseBySlug, SUPPORTED_COACH_SLUG } from "@/data/exercises";
 import { getMobilityExercise, mobilityExercises } from "@/data/mobilityExercises";
+import { getCoachedExercise, NEEDS_FOOTAGE } from "@/data/coachedExercises";
+import { CalibrationNote } from "@/components/coach/CalibrationNote";
 
 export default async function CoachPage({
   searchParams,
@@ -12,6 +14,8 @@ export default async function CoachPage({
   const { exercise: slug } = await searchParams;
   const requested = slug ? getExerciseBySlug(slug) : undefined;
   const mobility = slug ? getMobilityExercise(slug) : undefined;
+  const coached = slug ? getCoachedExercise(slug) : undefined;
+  const needsFootage = slug ? NEEDS_FOOTAGE[slug] : undefined;
   const isSupported = !slug || slug === SUPPORTED_COACH_SLUG;
 
   return (
@@ -25,7 +29,44 @@ export default async function CoachPage({
         </div>
       </div>
 
-      {mobility?.hold ? (
+      {coached ? (
+        <>
+          <HoldCoach config={coached.config} />
+          <div className="px-5 pt-3">
+            <CalibrationNote
+              calibration={coached.calibration}
+              provenance={coached.provenance}
+            />
+          </div>
+        </>
+      ) : needsFootage ? (
+        <div className="px-5 pt-6">
+          <div className="rounded-2xl border border-mist bg-white/60 p-5">
+            <h2 className="font-sans text-sm font-semibold text-ink">
+              {requested?.name ?? "This exercise"} — no camera check yet
+            </h2>
+            <p className="mt-2 font-sans text-sm leading-relaxed text-ink/70">{needsFootage}</p>
+            <p className="mt-3 font-sans text-sm leading-relaxed text-ink/70">
+              The cues below still apply — they just aren&apos;t being checked.
+            </p>
+            {requested && (
+              <ul className="mt-3 space-y-2">
+                {requested.cues.map((cue) => (
+                  <li key={cue} className="font-sans text-sm text-ink/70">
+                    • {cue}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <Link
+              href="/coach"
+              className="mt-4 inline-flex items-center justify-center rounded-xl bg-pine px-4 py-2.5 font-sans text-sm font-semibold text-paper transition hover:opacity-90"
+            >
+              Back to Coach
+            </Link>
+          </div>
+        </div>
+      ) : mobility?.hold ? (
         <HoldCoach config={mobility.hold} />
       ) : mobility ? (
         <div className="px-5 pt-6">
@@ -77,7 +118,7 @@ export default async function CoachPage({
         </div>
       )}
 
-      {!mobility && (
+      {!mobility && !coached && !needsFootage && (
         <div className="mt-6 space-y-2 px-5 pb-8">
           <h2 className="font-sans text-xs font-semibold tracking-wide text-moss uppercase">
             Hold &amp; stretch exercises

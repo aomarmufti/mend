@@ -5,6 +5,7 @@ import {
   getExerciseBySlug,
   SUPPORTED_COACH_SLUG,
 } from "@/data/exercises";
+import { hasCameraCheck, NEEDS_FOOTAGE } from "@/data/coachedExercises";
 import { VideoEmbed } from "@/components/library/VideoEmbed";
 import { ReferenceFigure } from "@/components/coach/ReferenceFigure";
 import { CheckIcon } from "@/components/icons";
@@ -70,15 +71,15 @@ export default async function ExerciseDetailPage({
           className="flex items-center justify-between rounded-2xl bg-pine px-4 py-3.5 text-paper"
         >
           <span className="font-sans text-sm font-medium">
-            {exercise.slug === SUPPORTED_COACH_SLUG
+            {hasCameraCheck(exercise.slug)
               ? "Try this with the camera coach"
-              : "Camera coach — coming soon"}
+              : "See why there's no camera check yet"}
           </span>
         </Link>
       ) : (
-        <p className="rounded-2xl border border-mist bg-white/40 px-4 py-3 font-sans text-xs text-ink/50">
-          This is an isometric hold — there&apos;s no visible movement for the
-          camera to track, so Camera Coach isn&apos;t available for it.
+        <p className="rounded-2xl border border-mist bg-white/40 px-4 py-3 font-sans text-xs leading-relaxed text-ink/55">
+          {NEEDS_FOOTAGE[exercise.slug] ??
+            "This is an isometric hold — there is no visible movement for the camera to track, so there is no camera check for it."}
         </p>
       )}
 

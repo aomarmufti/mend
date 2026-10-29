@@ -1,10 +1,13 @@
 import Link from "next/link";
 import { bodyAreas, areaHasProgramme } from "@/data/conditions";
+import { Logo } from "@/components/brand/Logo";
 
 export default function StartPage() {
   return (
     <div className="mx-auto min-h-screen max-w-md px-5 pt-12 pb-10">
-      <p className="font-sans text-xs font-semibold tracking-wide text-moss uppercase">
+      <Logo size={30} className="text-pine" />
+
+      <p className="mt-7 font-sans text-xs font-semibold tracking-wide text-moss uppercase">
         Getting started
       </p>
       <h1 className="mt-1 font-display text-3xl">Where does it hurt?</h1>

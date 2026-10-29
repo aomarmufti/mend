@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { DeviceFrame } from "@/components/DeviceFrame";
+
+const noopSubscribe = () => () => {};
 
 /**
  * Presentational-only wrapper. The app underneath is a normal responsive
@@ -11,14 +13,19 @@ import { DeviceFrame } from "@/components/DeviceFrame";
  */
 export function ShellChrome({ children }: { children: React.ReactNode }) {
   const [framed, setFramed] = useState(false);
-  const [showToggle, setShowToggle] = useState(false);
   const pathname = usePathname();
 
   // Opt-in only (?demo=1). It is a fixed-position button that otherwise lands
   // on top of the bottom nav's last tab and makes it untappable on every phone.
-  useEffect(() => {
-    setShowToggle(new URLSearchParams(window.location.search).has("demo"));
-  }, []);
+  // Read through useSyncExternalStore rather than an effect so the server
+  // render has a defined answer (false) and the client corrects it on
+  // hydration — the same pattern the rest of the app uses for
+  // browser-only state.
+  const showToggle = useSyncExternalStore(
+    noopSubscribe,
+    () => new URLSearchParams(window.location.search).has("demo"),
+    () => false,
+  );
   const isFocusedFlow = pathname?.startsWith("/session");
 
   if (isFocusedFlow) {
