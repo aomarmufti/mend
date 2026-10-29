@@ -213,7 +213,22 @@ export type HoldSignal =
    * Needs both legs at once: how far apart the feet are, and whether the
    * back (straighter) leg has stayed extended rather than collapsing.
    */
-  | { kind: "splitStance"; backKneeMin: number; minSeparation: number };
+  | { kind: "splitStance"; backKneeMin: number; minSeparation: number }
+  /**
+   * Knees rolled to one side while lying on your back — a lumbar rotation.
+   *
+   * The obvious measurement, how far apart the knees are sideways, does not
+   * work from a side-on camera: the roll happens along the camera's depth
+   * axis, so both knees project onto nearly the same point (measured
+   * separation stayed at 0.000–0.004 across a whole clip). What a side-on
+   * camera *can* see is that the knees drop toward the floor as they roll.
+   * `maxKneeHeight` is that drop: the knee midpoint's height above the hips,
+   * as a fraction of torso length, negative because the screen's y axis
+   * points down. Lying with knees up measures about -0.60; rolled to either
+   * side it rises to between -0.48 and -0.39, so a ceiling around -0.52
+   * separates the two with margin at both ends.
+   */
+  | { kind: "kneeRoll"; maxKneeHeight: number };
 
 export interface SignalReading {
   inPosition: boolean;
@@ -306,6 +321,34 @@ export function evaluateSignal(
     return {
       inPosition: lifted.lift >= signal.minLift,
       side: lifted.side,
+      kneeAngle: leg?.knee ?? null,
+      hipAngle: leg?.hip ?? null,
+    };
+  }
+
+  if (signal.kind === "kneeRoll") {
+    if (torsoLength === null) return null;
+    const leftKnee = landmarks[LANDMARK.leftKnee];
+    const rightKnee = landmarks[LANDMARK.rightKnee];
+    const leftHip = landmarks[LANDMARK.leftHip];
+    const rightHip = landmarks[LANDMARK.rightHip];
+    // Only the near-side landmarks are ever confident here — rolling puts one
+    // knee behind the other — so this needs one readable knee and one readable
+    // hip, not a matched pair. Midpoints fall back to whichever side is seen.
+    const knee = visible(leftKnee) ? leftKnee : visible(rightKnee) ? rightKnee : null;
+    const hip = visible(leftHip) ? leftHip : visible(rightHip) ? rightHip : null;
+    if (!knee || !hip) return null;
+
+    const bothKnees = visible(leftKnee) && visible(rightKnee);
+    const kneeY = bothKnees ? (leftKnee.y + rightKnee.y) / 2 : knee.y;
+    const bothHips = visible(leftHip) && visible(rightHip);
+    const hipY = bothHips ? (leftHip.y + rightHip.y) / 2 : hip.y;
+
+    const height = (kneeY - hipY) / torsoLength;
+    const leg = legs[0] ?? null;
+    return {
+      inPosition: height >= signal.maxKneeHeight,
+      side: leg?.side ?? null,
       kneeAngle: leg?.knee ?? null,
       hipAngle: leg?.hip ?? null,
     };

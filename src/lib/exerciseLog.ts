@@ -22,6 +22,10 @@ export interface ExerciseRecord {
   durationMs: number;
   /** Mean coach accuracy across the session, or null when untracked. */
   avgScore: number | null;
+  /** True when the user ticked the exercise off themselves rather than the
+   *  camera counting it. Kept distinct so the history never presents a claim
+   *  as a measurement. */
+  selfReported?: boolean;
 }
 
 // Deliberately NOT toISOString().slice(0, 10) — that is the UTC calendar date,

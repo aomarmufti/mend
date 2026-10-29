@@ -20,10 +20,10 @@ import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { markCompletedToday } from "@/lib/localSession";
 import { ReferenceFigure } from "@/components/coach/ReferenceFigure";
 
-const MEDIAPIPE_VERSION = "0.10.35";
-const WASM_BASE_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`;
-const MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+// Self-hosted so the coach works on a weak connection or none at all, and
+// so starting a health activity does not hand a third-party CDN the user's IP.
+const WASM_BASE_URL = "/mediapipe/wasm";
+const MODEL_URL = "/mediapipe/models/pose_landmarker_lite.task";
 
 const CALIBRATION_FRAMES = 30;
 /** Reps counted before the set rolls over — the upper end of the NHS dosage. */
