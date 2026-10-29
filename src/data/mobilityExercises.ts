@@ -38,7 +38,10 @@ const FILMED = "Filmed reference. Thresholds measured from that footage — one 
 
 /** Re-verified frame by frame against the source clip, not just derived from it. */
 const FILMED_VERIFIED =
-  "Filmed reference, re-verified frame by frame with scripts/calibrate.mjs (271/271 frames tracked). Still one clip, one person, not clinically validated.";
+  "Filmed reference, re-verified frame by frame with scripts/calibrate.mjs (271/271 frames tracked) and replayed through the shipped logic with scripts/replay.mjs. Still one clip, one person, not clinically validated.";
+
+const QUAD_VERIFIED =
+  "Filmed reference, re-verified frame by frame with scripts/calibrate.mjs (151/151 frames tracked) and replayed through the shipped logic with scripts/replay.mjs. Still one clip, one person, not clinically validated.";
 
 /** One hold length across the set, so the coach behaves the same everywhere. */
 const HOLD_MS = 15_000;
@@ -170,16 +173,20 @@ export const mobilityExercises: MobilityExercise[] = [
       // 271/271 frames tracked. Over the held phase:
       //
       //   back knee   167.4 – 174.6   (front knee 122.9 – 156.8)
-      //   separation  0.119 – 0.164   (0 standing normally)
+      //   separation  0.66 – 0.94 torso lengths, dipping to 0.67 at its
+      //               shallowest; 0.31 on the step back in, 0.10 feet together
       //
       // backKneeMin 165 sits 2.4° below the back knee's floor and 8.2° above
       // the front knee's ceiling, so it separates the two legs cleanly.
       //
-      // minSeparation was 0.13, which the first calibration run showed to be
-      // WRONG: a genuine hold dips to 0.119 at its shallowest, so the check
-      // was dropping out mid-stretch. 0.10 clears the hold's floor and still
-      // sits far above standing.
-      signal: { kind: "splitStance", backKneeMin: 165, minSeparation: 0.1 },
+      // minSeparation is a fraction of TORSO LENGTH. It was a fraction of the
+      // frame — first 0.13, then 0.10 — and both were wrong for the same
+      // reason: measured against the frame, the number moves with how far the
+      // user is standing from the camera, so a threshold that fits footage
+      // shot head-to-toe rejects the identical stretch done two steps back.
+      // 0.55 torso lengths sits 0.12 under the hold's floor and 0.24 over the
+      // step-in, and means the same thing at any distance.
+      signal: { kind: "splitStance", backKneeMin: 165, minSeparation: 0.55 },
       targetReps: 3,
       hold: { minHoldMs: HOLD_MS },
       setupHint: "Stand side-on to the camera with your whole body and both feet in frame.",
@@ -206,19 +213,37 @@ export const mobilityExercises: MobilityExercise[] = [
     hold: {
       slug: "standing-quad-stretch",
       name: "Quadriceps Stretch",
-      // Measured: knee folded to 42–65° with the hip held at 176–179°, which is
-      // exactly the "knee pointing at the floor" cue expressed as a number —
-      // an early attempt in the same clip that let the thigh swing forward
-      // read hip 89° and is correctly rejected by the hip floor.
-      // Ankle visibility runs 0.62–0.67 (a hand is gripping it), so this is
-      // the noisiest of the tracked set.
+      // Re-verified against the October 2026 clip, 151/151 frames tracked, and
+      // replayed through the shipped logic with scripts/replay.mjs. Over the
+      // held phase (2.4s onward):
+      //
+      //   stretching knee  10 – 65° folded, with single-frame spikes to 115°
+      //   same-side hip    170 – 180°  (the "knee pointing down" cue)
+      //   standing leg     knee 155 – 167°, hip 130 – 138°
+      //
+      // The hip floor of 155 is what earns its place here: raising the leg
+      // without folding it reads knee 100 – 170° and hip 145 – 170°, and the
+      // early part of the clip — leg up, not yet drawn in — is correctly
+      // rejected until 2.4s, when the heel comes to the buttock.
+      //
+      // Ankle visibility sits at 0.62 – 0.66 throughout because a hand is
+      // gripping it, which makes this the noisiest of the tracked set: the
+      // knee angle spikes for a frame at a time. Those are absorbed by the
+      // hold's grace window rather than tightened away, and the replay
+      // confirms it — a solid run of in-position frames from 2.4s with no
+      // broken holds.
       signal: { kind: "jointBand", knee: { max: 80 }, hip: { min: 155 } },
       targetReps: 3,
       hold: { minHoldMs: HOLD_MS },
       setupHint: "Stand side-on to the camera with your whole body in frame.",
     },
     conditions: ["patellofemoral-pain-syndrome", "knee-osteoarthritis"],
-    provenance: FILMED,
+    reference: {
+      src: "/reference/standing-quad-stretch.mp4",
+      poster: "/reference/standing-quad-stretch.jpg",
+      watchFor: "Knee stays pointing at the floor as the heel comes up — stand tall, don't lean.",
+    },
+    provenance: QUAD_VERIFIED,
   },
 ];
 

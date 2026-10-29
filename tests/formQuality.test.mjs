@@ -21,15 +21,29 @@ function standing({ backAnkleX, frontAnkleX, backKneeX, frontKneeX }) {
   });
 }
 
-const CALF = { kind: 'splitStance', backKneeMin: 165, minSeparation: 0.13 };
-const read = (lm) => evaluateSignal(lm, 1, CALF, { left: null, right: null }, 0.3);
+// Moves the whole figure toward the frame's centre, which is exactly what
+// standing further from the camera does to the landmarks. Torso length shrinks
+// with it, so anything measured as a fraction of the body is unchanged and
+// anything measured as a fraction of the frame is not.
+const TORSO = 0.3;
+function stepBack(lm, factor) {
+  return lm.map((p) => ({ ...p, x: 0.5 + (p.x - 0.5) * factor, y: 0.5 + (p.y - 0.5) * factor }));
+}
+
+// The shipped calf-stretch config, thresholds and all.
+const CALF = { kind: 'splitStance', backKneeMin: 165, minSeparation: 0.55 };
+const read = (lm, torso = TORSO) => evaluateSignal(lm, 1, CALF, { left: null, right: null }, torso);
+
+// A stance of 0.17 across a 0.30 torso is 0.567 — just over the 0.55 minimum.
+const onMinimum = standing({ backAnkleX:0.42, frontAnkleX:0.59, backKneeX:0.46, frontKneeX:0.59 });
+const fullStance = standing({ backAnkleX:0.34, frontAnkleX:0.60, backKneeX:0.42, frontKneeX:0.62 });
 
 const cases = [
   ['feet together, no stretch',      standing({ backAnkleX:0.50, frontAnkleX:0.50, backKneeX:0.50, frontKneeX:0.50 }), false, [0, 40]],
-  // Separation sits exactly on the 0.13 minimum: in position, but with no
-  // margin, which should read as adequate rather than perfect.
-  ['exactly on the minimum stance',  standing({ backAnkleX:0.42, frontAnkleX:0.55, backKneeX:0.46, frontKneeX:0.55 }), true,  [60, 85]],
-  ['full stance, back leg straight',  standing({ backAnkleX:0.34, frontAnkleX:0.56, backKneeX:0.42, frontKneeX:0.58 }), true,  [85, 100]],
+  // On the minimum: in position, but with no margin, which should read as
+  // adequate rather than perfect.
+  ['exactly on the minimum stance',  onMinimum,  true,  [60, 85]],
+  ['full stance, back leg straight', fullStance, true,  [85, 100]],
 ];
 
 let pass = 0;
@@ -46,5 +60,27 @@ for (const [name, lm, expectIn, [lo, hi]] of cases) {
 
 console.log(`${monotonic ? 'PASS' : 'FAIL'}  ${'form rises as the stance improves'.padEnd(32)}`);
 if (monotonic) pass++;
-console.log(`\n${pass}/${cases.length + 1} form-quality cases pass`);
-if (pass !== cases.length + 1) process.exitCode = 1;
+let extra = 1;
+
+// The regression that sent this back to the drawing board: the calf check read
+// a stance as a fraction of the FRAME, so the same correct stretch performed
+// further from the camera fell under the threshold and the coach reported the
+// user out of position. A stretch that passes up close must pass from across
+// the room, and must score the same, because it is the same stretch.
+const near = read(fullStance);
+let invariant = true;
+for (const factor of [0.75, 0.6, 0.45]) {
+  const far = read(stepBack(fullStance, factor), TORSO * factor);
+  const ok = far !== null && far.inPosition === near.inPosition && Math.abs(far.quality - near.quality) < 1;
+  if (!ok) invariant = false;
+  console.log(
+    `${ok ? 'PASS' : 'FAIL'}  ${`same stretch at ${Math.round(factor * 100)}% body size`.padEnd(32)}` +
+      ` inPosition=${far?.inPosition} form=${far === null ? null : Math.round(far.quality)}%` +
+      ` (want ${near.inPosition} / ${Math.round(near.quality)}%)`,
+  );
+}
+if (invariant) pass++;
+extra += 1;
+
+console.log(`\n${pass}/${cases.length + extra} form-quality cases pass`);
+if (pass !== cases.length + extra) process.exitCode = 1;
