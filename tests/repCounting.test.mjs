@@ -39,4 +39,47 @@ for (const [name, frames, expect] of cases) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name.padEnd(46)} expected ${expect}, got ${got}`);
 }
 console.log(`\n${pass}/${cases.length} rep-counting cases pass`);
-process.exit(pass === cases.length ? 0 : 1);
+if (pass !== cases.length) process.exitCode = 1;
+
+// ---------------------------------------------------------------------------
+// Rep mode: squats and lunges. A rep banks on the way back OUT of the target
+// zone, so these pin the cases where that distinction decides the number.
+// ---------------------------------------------------------------------------
+import { trackReps, initialRepTrackerState } from '../src/components/coach/holdMath.ts';
+const RCFG = { minInZoneMs: 350, minRepMs: 800, graceMs: 250 };
+
+function runReps(frames) {
+  let t = initialRepTrackerState, reps = 0, clock = 0;
+  for (const [signal, dur] of frames) {
+    for (let e = 0; e < dur; e += 33) {
+      clock += 33;
+      const out = trackReps(t, signal, clock, RCFG);
+      t = out.tracker;
+      if (out.repBanked) reps += 1;
+    }
+  }
+  return reps;
+}
+
+const repCases = [
+  ['3 squats, down ~1s then back up',        [[false,900],...Array(3).fill([[true,1000],[false,1000]]).flat()], 3],
+  ['stays at the bottom — not a rep yet',    [[false,500],[true,6000]], 0],
+  ['...and counts once they stand back up',  [[false,500],[true,6000],[false,900]], 1],
+  ['bounce through the zone does not count', [[false,500],[true,120],[false,900]], 0],
+  ['chatter on the threshold counts once',   [[false,500],[true,600],[false,100],[true,600],[false,900]], 1],
+  // Two full down-up cycles 660ms apart. Nobody squats that fast; this is the
+  // signal chattering, and minRepMs is what stops it inflating the count.
+  ['two cycles inside minRepMs → one rep',    [[false,500],[true,400],[false,290],[true,400],[false,900]], 1],
+  ['never reaching depth counts nothing',    [[false,6000]], 0],
+  ['10 clean reps count 10',                 [[false,900],...Array(10).fill([[true,600],[false,900]]).flat()], 10],
+];
+
+let repPass = 0;
+for (const [name, frames, expect] of repCases) {
+  const got = runReps(frames);
+  const ok = got === expect;
+  if (ok) repPass++;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name.padEnd(46)} expected ${expect}, got ${got}`);
+}
+console.log(`\n${repPass}/${repCases.length} rep-mode cases pass`);
+if (repPass !== repCases.length) process.exitCode = 1;

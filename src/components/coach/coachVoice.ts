@@ -108,5 +108,9 @@ export const VOICE = {
     tone(320, 220);
     speak("Lost the position. Get back into it when you're ready.");
   },
+  notDeepEnough: () => {
+    tone(320, 160);
+    speak("Not quite far enough. Go a little deeper next one.");
+  },
   unreadable: () => speak("I can't see you — check your whole body is in frame."),
 };

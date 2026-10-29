@@ -10,6 +10,7 @@ import { markCompletedToday } from "@/lib/localSession";
 import { logExercise } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { CheckIcon } from "@/components/icons";
+import { Logo } from "@/components/brand/Logo";
 
 // Touches navigator.mediaDevices, so it can only run in the browser.
 const PoseCoach = dynamic(
@@ -78,6 +79,8 @@ export function SessionRunner({ exercises }: { exercises: Exercise[] }) {
         >
           Back to Today
         </Link>
+
+        <Logo size={20} className="mt-10 text-ink/35" />
       </div>
     );
   }

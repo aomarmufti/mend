@@ -14,6 +14,12 @@ import {
   resolveInPosition,
   initialReadability,
   DEFAULT_HOLD_CONFIG,
+  trackReps,
+  initialRepTrackerState,
+  DEFAULT_REP_CONFIG,
+  type RepTrackerState,
+  type RepConfig,
+  type RepCue,
   type HoldTracker,
   type HoldCue,
   type HoldConfig,
@@ -23,7 +29,7 @@ import {
 import { logExercise } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { markCompletedToday } from "@/lib/localSession";
-import { VOICE, stopSpeaking } from "@/components/coach/coachVoice";
+import { VOICE, stopSpeaking, tone } from "@/components/coach/coachVoice";
 
 // Self-hosted so the coach works on a weak connection or none at all, and
 // so starting a health activity does not hand a third-party CDN the user's IP.
@@ -40,7 +46,14 @@ export interface HoldExerciseConfig {
   name: string;
   signal: HoldSignal;
   targetReps: number;
+  /**
+   * "hold" reaches a position and stays there (a stretch); "reps" reaches it
+   * and returns (a squat, a lunge). Both read the same signal — they differ
+   * only in when a repetition is banked. Defaults to "hold".
+   */
+  mode?: "hold" | "reps";
   hold?: Partial<HoldConfig>;
+  rep?: Partial<RepConfig>;
   /** Shown once, before calibration — how to position the camera. */
   setupHint: string;
 }
@@ -75,6 +88,15 @@ function torsoLengthOf(landmarks: NormalizedLandmark[], aspect: number): number 
   return length > 0 ? length : null;
 }
 
+const REP_CUE_COPY: Record<RepCue, (remaining: number) => string> = {
+  ready: () => "Ready when you are.",
+  descending: () => "Good — keep going.",
+  holding: () => "That's the depth. Now come back up.",
+  counted: (remaining) =>
+    remaining > 0 ? "Counted. Next one when you're ready." : "That's the set — nice work.",
+  tooFast: () => "Not quite far enough — go a little deeper.",
+};
+
 const CUE_COPY: Record<HoldCue, (targetSec: number, remainingReps: number) => string> = {
   seek: () => "Get into position to begin.",
   holding: () => "Hold…",
@@ -85,7 +107,7 @@ const CUE_COPY: Record<HoldCue, (targetSec: number, remainingReps: number) => st
 };
 
 interface UiState {
-  cue: HoldCue;
+  cue: HoldCue | RepCue;
   elapsedSec: number;
   targetSec: number;
   reps: number;
@@ -144,6 +166,7 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
   const calibSumsRef = useRef({ hipY: { left: 0, right: 0 }, ankleY: { left: 0, right: 0 }, torso: 0 });
 
   const holdTrackerRef = useRef<HoldTracker>(initialHoldTracker);
+  const repTrackerRef = useRef<RepTrackerState>(initialRepTrackerState);
   const readabilityRef = useRef<ReadabilityTracker>(initialReadability);
   const lastReadingRef = useRef<{ side: "left" | "right" | null; kneeAngle: number | null }>({
     side: null,
@@ -155,12 +178,14 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
   const activeSideRef = useRef<"left" | "right" | null>(null);
   // Audio fires on transitions only. Without these the cue would be re-spoken
   // every frame it stayed true, which is ~60 times a second.
-  const spokenCueRef = useRef<HoldCue | null>(null);
+  const spokenCueRef = useRef<HoldCue | RepCue | null>(null);
   const spokenCountRef = useRef<number | null>(null);
   const spokenUnreadableRef = useRef(false);
   const voiceOnRef = useRef(true);
 
   const holdConfig: HoldConfig = { ...DEFAULT_HOLD_CONFIG, ...config.hold };
+  const repConfig: RepConfig = { ...DEFAULT_REP_CONFIG, ...config.rep };
+  const isReps = config.mode === "reps";
 
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -301,14 +326,28 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
 
       activeSideRef.current = drawSide;
 
-      const result = trackHold(holdTrackerRef.current, inPosition, now, holdConfig);
-      holdTrackerRef.current = result.tracker;
+      // Both modes read the same in-position boolean; only the banking rule
+      // differs. `result` is normalised so everything downstream — voice,
+      // drawing, the UI — stays mode-agnostic.
+      let result: { cue: HoldCue | RepCue; repBanked: boolean; elapsedMs: number };
+      if (isReps) {
+        const r = trackReps(repTrackerRef.current, inPosition, now, repConfig);
+        repTrackerRef.current = r.tracker;
+        result = { cue: r.cue, repBanked: r.repBanked, elapsedMs: r.inZoneMs };
+      } else {
+        const h = trackHold(holdTrackerRef.current, inPosition, now, holdConfig);
+        holdTrackerRef.current = h.tracker;
+        result = { cue: h.cue, repBanked: h.repBanked, elapsedMs: h.elapsedMs };
+      }
 
       // ---- spoken feedback -------------------------------------------------
       if (voiceOnRef.current) {
         const previousCue = spokenCueRef.current;
         if (result.cue !== previousCue) {
-          if (result.cue === "holding" && previousCue !== "nearly") {
+          if (isReps) {
+            if (result.cue === "holding") tone(660, 110);
+            else if (result.cue === "tooFast") VOICE.notDeepEnough();
+          } else if (result.cue === "holding" && previousCue !== "nearly") {
             VOICE.enteredPosition();
             spokenCountRef.current = null;
           } else if (result.cue === "released-early") {
@@ -317,8 +356,9 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
           }
           spokenCueRef.current = result.cue;
         }
-        // Count the hold down out loud over its final seconds.
-        if (result.cue === "holding" || result.cue === "nearly") {
+        // Count the hold down out loud over its final seconds. Reps have no
+        // target duration to count toward.
+        if (!isReps && (result.cue === "holding" || result.cue === "nearly")) {
           const left = Math.ceil((holdConfig.minHoldMs - result.elapsedMs) / 1000);
           if (left > 0 && left <= 3 && spokenCountRef.current !== left) {
             spokenCountRef.current = left;
@@ -361,7 +401,9 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
           message:
             resolved.unreadable && !resolved.inPosition
               ? "Looking for you — make sure your whole body is in frame."
-              : CUE_COPY[result.cue](holdConfig.minHoldMs / 1000, remaining),
+              : isReps
+                ? REP_CUE_COPY[result.cue as RepCue](remaining)
+                : CUE_COPY[result.cue as HoldCue](holdConfig.minHoldMs / 1000, remaining),
         });
       }
     }
@@ -371,7 +413,7 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
       video: HTMLVideoElement,
       landmarks: NormalizedLandmark[] | null,
       side: "left" | "right" | null,
-      cue: HoldCue,
+      cue: HoldCue | RepCue,
     ) {
       if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
         canvas.width = video.videoWidth;
@@ -416,16 +458,22 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
   }, [router, onFinish, config.slug, config.name]);
 
   const busy = status !== "tracking" && status !== "calibrating";
-  const progressPct = ui.targetSec > 0 ? Math.min(100, (ui.elapsedSec / ui.targetSec) * 100) : 0;
+  const progressPct = isReps
+    ? Math.min(100, (ui.reps / Math.max(1, ui.targetReps)) * 100)
+    : ui.targetSec > 0
+      ? Math.min(100, (ui.elapsedSec / ui.targetSec) * 100)
+      : 0;
 
-  const cueClass =
-    ui.cue === "banked"
-      ? "bg-moss/10 text-moss"
-      : ui.cue === "nearly"
-        ? "bg-amber/10 text-amber"
-        : ui.cue === "released-early"
-          ? "bg-coral/10 text-coral"
-          : "bg-white/60 text-ink/70";
+  const good = ui.cue === "banked" || ui.cue === "counted" || ui.cue === "holding";
+  const warn = ui.cue === "nearly" || ui.cue === "descending";
+  const bad = ui.cue === "released-early" || ui.cue === "tooFast";
+  const cueClass = good
+    ? "bg-moss/10 text-moss"
+    : warn
+      ? "bg-amber/10 text-amber"
+      : bad
+        ? "bg-coral/10 text-coral"
+        : "bg-white/60 text-ink/70";
 
   return (
     <div className="space-y-4 px-5 pt-6">
@@ -461,7 +509,7 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
             if (!next) stopSpeaking();
           }}
           aria-pressed={voiceOn}
-          className="absolute top-2 right-2 rounded-full bg-ink/70 px-3 py-1.5 font-sans text-[11px] font-medium text-paper/90"
+          className="absolute right-2 bottom-2 rounded-full bg-ink/70 px-3 py-1.5 font-sans text-[11px] font-medium text-paper/90"
         >
           {voiceOn ? "🔊 Voice on" : "🔇 Voice off"}
         </button>
@@ -491,7 +539,7 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
                 cy="50"
                 r="44"
                 fill="none"
-                stroke={ui.cue === "banked" ? "#4B7A63" : ui.cue === "nearly" ? "#D98A3A" : "#1C332B"}
+                stroke={good ? "#4B7A63" : warn ? "#D98A3A" : bad ? "#BE4B3C" : "#1C332B"}
                 strokeWidth="8"
                 strokeLinecap="round"
                 strokeDasharray={`${2 * Math.PI * 44}`}
@@ -499,21 +547,25 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
                 className="transition-all duration-150"
               />
             </svg>
-            <span className="font-mono text-2xl font-semibold text-pine">{ui.elapsedSec}s</span>
+            <span className="font-mono text-2xl font-semibold text-pine">
+              {isReps ? ui.reps : `${ui.elapsedSec}s`}
+            </span>
           </div>
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-2">
           <div className="rounded-xl bg-paper px-3 py-2.5 text-center">
             <p className="font-mono text-xl font-semibold text-pine">{ui.reps}</p>
-            <p className="font-sans text-[11px] text-ink/50">Reps complete</p>
+            <p className="font-sans text-[11px] text-ink/55">Reps complete</p>
           </div>
           <div className="rounded-xl bg-paper px-3 py-2.5 text-center">
             <p className="font-mono text-xl font-semibold text-pine">
-              {ui.targetSec}
-              <span className="text-xs text-ink/40">s</span>
+              {isReps ? ui.targetReps : ui.targetSec}
+              {!isReps && <span className="text-xs text-ink/50">s</span>}
             </p>
-            <p className="font-sans text-[11px] text-ink/50">Target hold</p>
+            <p className="font-sans text-[11px] text-ink/55">
+              {isReps ? "Target reps" : "Target hold"}
+            </p>
           </div>
         </div>
 
@@ -543,7 +595,7 @@ function renderSkeleton(
   canvas: HTMLCanvasElement,
   landmarks: NormalizedLandmark[],
   side: "left" | "right" | null,
-  cue: HoldCue,
+  cue: HoldCue | RepCue,
 ) {
   const w = canvas.width;
   const h = canvas.height;

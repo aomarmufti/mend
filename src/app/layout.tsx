@@ -23,7 +23,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Mend — PFPS rehab",
+  title: "Mend — camera-coached rehab",
   description: "A calm, clinical companion for patellofemoral pain rehab.",
 };
 

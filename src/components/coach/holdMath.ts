@@ -213,7 +213,27 @@ export type HoldSignal =
    * Needs both legs at once: how far apart the feet are, and whether the
    * back (straighter) leg has stayed extended rather than collapsing.
    */
-  | { kind: "splitStance"; backKneeMin: number; minSeparation: number }
+  | {
+      kind: "splitStance";
+      backKneeMin: number;
+      minSeparation: number;
+      /** Lunges also need the FRONT knee bent, not just the back leg straight. */
+      frontKneeMax?: number;
+    }
+  /**
+   * Standing on one leg: the lifted ankle sits clearly higher than the
+   * planted one. Measured as a fraction of torso length so it does not
+   * depend on distance from the camera. Unlike `footLift` this needs no
+   * calibrated baseline — it compares the two ankles to each other, which
+   * is what "one foot off the floor" actually means.
+   */
+  | { kind: "singleLegStance"; minAnkleGap: number }
+  /**
+   * Angle between the two legs at the hips — a hip abduction. Needs the
+   * front-on framing the exercise is filmed in; side-on, the lifting leg
+   * travels along the camera's depth axis and this reads near zero.
+   */
+  | { kind: "legSeparation"; minAngle: number }
   /**
    * Knees rolled to one side while lying on your back — a lumbar rotation.
    *
@@ -354,6 +374,54 @@ export function evaluateSignal(
     };
   }
 
+  if (signal.kind === "singleLegStance") {
+    if (torsoLength === null) return null;
+    const left = landmarks[LANDMARK.leftAnkle];
+    const right = landmarks[LANDMARK.rightAnkle];
+    if (!visible(left) || !visible(right)) return null;
+    // Positive when the left ankle is the higher one, negative when it is the
+    // right. The sign tells us which leg is lifted; the magnitude is the lift.
+    const gap = (right.y - left.y) / torsoLength;
+    const liftedSide: Side = gap >= 0 ? "left" : "right";
+    // The STANDING leg is the one being coached — it is the one doing the work
+    // and the one whose alignment matters — so the overlay follows it.
+    const standingSide: Side = liftedSide === "left" ? "right" : "left";
+    const standing = legs.find((l) => l.side === standingSide);
+    return {
+      inPosition: Math.abs(gap) >= signal.minAnkleGap,
+      side: standingSide,
+      kneeAngle: standing?.knee ?? null,
+      hipAngle: standing?.hip ?? null,
+    };
+  }
+
+  if (signal.kind === "legSeparation") {
+    const hip = visible(landmarks[LANDMARK.leftHip])
+      ? landmarks[LANDMARK.leftHip]
+      : visible(landmarks[LANDMARK.rightHip])
+        ? landmarks[LANDMARK.rightHip]
+        : null;
+    const leftAnkle = landmarks[LANDMARK.leftAnkle];
+    const rightAnkle = landmarks[LANDMARK.rightAnkle];
+    if (!hip || !visible(leftAnkle) || !visible(rightAnkle)) return null;
+    // Angle subtended at the hip by the two ankles: legs together reads near
+    // 0 degrees, a lifted top leg opens it up.
+    const separation = jointAngle(
+      correct(leftAnkle, aspect),
+      correct(hip, aspect),
+      correct(rightAnkle, aspect),
+    );
+    const top = legs.length
+      ? legs.reduce((a, b) => (a.ankle.y <= b.ankle.y ? a : b))
+      : null;
+    return {
+      inPosition: separation >= signal.minAngle,
+      side: top?.side ?? null,
+      kneeAngle: top?.knee ?? null,
+      hipAngle: top?.hip ?? null,
+    };
+  }
+
   // splitStance. The stance width only needs the two ankles; the knee check
   // only needs the back leg's own chain. Requiring a full confident chain on
   // *both* legs is too strict: measured in a side-on standing clip, the far
@@ -369,8 +437,18 @@ export function evaluateSignal(
   // knee is bent, so this reads as out of position — a false negative rather
   // than a false pass, which is the safe way round to be wrong.
   const back = legs.reduce((a, b) => (a.knee >= b.knee ? a : b));
+  const front = legs.reduce((a, b) => (a.knee <= b.knee ? a : b));
+  // A lunge additionally needs the front knee bent. Without both legs
+  // readable we cannot tell a lunge from a split stance, so this fails
+  // closed rather than counting a rep nobody performed.
+  const frontOk =
+    signal.frontKneeMax === undefined ||
+    (legs.length >= 2 && front.knee <= signal.frontKneeMax);
   return {
-    inPosition: separation >= signal.minSeparation && back.knee >= signal.backKneeMin,
+    inPosition:
+      separation >= signal.minSeparation &&
+      back.knee >= signal.backKneeMin &&
+      frontOk,
     side: back.side,
     kneeAngle: back.knee,
     hipAngle: back.hip,
@@ -428,5 +506,136 @@ export function resolveInPosition(
     tracker: { ...tracker, unreadableSince: since },
     inPosition: withinGrace ? tracker.lastInPosition : false,
     unreadable: true,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Rep tracking: the same in-position signal, counted as repetitions instead
+// of as a sustained hold.
+// ---------------------------------------------------------------------------
+
+/**
+ * A hold and a rep are the same measurement read two different ways. A stretch
+ * asks you to reach a position and stay there; a squat asks you to reach it
+ * and come back. So rep tracking consumes exactly the boolean `trackHold`
+ * does, and differs only in when it banks.
+ *
+ * A rep banks on the way *out* of the target zone, not on the way in: a squat
+ * is not finished at the bottom, it is finished when you have stood back up.
+ * Banking on entry would also count a single slow descent as a rep while the
+ * user is still mid-movement.
+ */
+export interface RepConfig {
+  /** Time that must be spent in the zone before leaving it can count. */
+  minInZoneMs: number;
+  /** Floor on the interval between banked reps. */
+  minRepMs: number;
+  /** Momentary drop-out forgiven before the zone is considered left. */
+  graceMs: number;
+}
+
+export const DEFAULT_REP_CONFIG: RepConfig = {
+  // Deep enough to exclude a bounce, short enough not to demand a pause at
+  // the bottom of a squat, which is not what the exercise asks for.
+  minInZoneMs: 350,
+  minRepMs: 800,
+  graceMs: 250,
+};
+
+export type RepPhase = "ready" | "inZone" | "leaving";
+
+export interface RepTrackerState {
+  phase: RepPhase;
+  enteredZoneAt: number | null;
+  lastInZoneAt: number | null;
+  lastRepAt: number;
+}
+
+export const initialRepTrackerState: RepTrackerState = {
+  phase: "ready",
+  enteredZoneAt: null,
+  lastInZoneAt: null,
+  lastRepAt: 0,
+};
+
+export type RepCue =
+  | "ready" // out of the zone, waiting for the next rep
+  | "descending" // in the zone but not yet long enough for it to count
+  | "holding" // in the zone and it will count once they come back out
+  | "counted" // fires on the frame a rep banks
+  | "tooFast"; // left the zone before it could count
+
+export interface RepResult {
+  tracker: RepTrackerState;
+  repBanked: boolean;
+  cue: RepCue;
+  /** Milliseconds spent in the zone on this attempt, 0 when outside it. */
+  inZoneMs: number;
+}
+
+export function trackReps(
+  tracker: RepTrackerState,
+  inPosition: boolean,
+  now: number,
+  config: RepConfig = DEFAULT_REP_CONFIG,
+): RepResult {
+  if (inPosition) {
+    if (tracker.phase === "ready") {
+      return {
+        tracker: {
+          ...tracker,
+          phase: "inZone",
+          enteredZoneAt: now,
+          lastInZoneAt: now,
+        },
+        repBanked: false,
+        cue: "descending",
+        inZoneMs: 0,
+      };
+    }
+    const inZoneMs = now - (tracker.enteredZoneAt ?? now);
+    return {
+      tracker: { ...tracker, phase: "inZone", lastInZoneAt: now },
+      repBanked: false,
+      cue: inZoneMs >= config.minInZoneMs ? "holding" : "descending",
+      inZoneMs,
+    };
+  }
+
+  if (tracker.phase === "ready") {
+    return { tracker, repBanked: false, cue: "ready", inZoneMs: 0 };
+  }
+
+  // Out of the zone, but a single misread frame is not a completed rep.
+  const since = now - (tracker.lastInZoneAt ?? now);
+  if (since < config.graceMs) {
+    return {
+      tracker,
+      repBanked: false,
+      cue: "holding",
+      inZoneMs: now - (tracker.enteredZoneAt ?? now),
+    };
+  }
+
+  const heldFor = (tracker.lastInZoneAt ?? now) - (tracker.enteredZoneAt ?? now);
+  const longEnough = heldFor >= config.minInZoneMs;
+  const notTooSoon = now - tracker.lastRepAt >= config.minRepMs;
+
+  if (longEnough && notTooSoon) {
+    return {
+      tracker: { ...initialRepTrackerState, lastRepAt: now },
+      repBanked: true,
+      cue: "counted",
+      inZoneMs: 0,
+    };
+  }
+
+  // Touched the zone and came straight back out: a bounce, or chatter on the
+  // threshold. Reset without counting rather than inflate the number.
+  return {
+    tracker: { ...initialRepTrackerState, lastRepAt: tracker.lastRepAt },
+    repBanked: false,
+    cue: longEnough ? "ready" : "tooFast",
+    inZoneMs: 0,
   };
 }
