@@ -1,4 +1,5 @@
 import type { HoldExerciseConfig } from "@/components/coach/HoldCoach";
+import type { ReferenceClip } from "@/components/coach/ReferenceLoop";
 
 /**
  * Camera-coached hold/stretch exercises, kept separate from `exercises.ts`.
@@ -27,11 +28,17 @@ export interface MobilityExercise {
   /** Condition slugs this stretch is offered under. See the note above. */
   conditions: string[];
   cameraNote?: string;
+  /** Looping footage of the movement done correctly, shown beside the camera. */
+  reference?: ReferenceClip;
   /** Where the reference footage and cues came from, for the same traceability the sourced programme has. */
   provenance: string;
 }
 
-const FILMED = "Filmed reference, September 2026. Thresholds measured from that footage — one clip, one person, not clinically validated.";
+const FILMED = "Filmed reference. Thresholds measured from that footage — one clip, one person, not clinically validated.";
+
+/** Re-verified frame by frame against the source clip, not just derived from it. */
+const FILMED_VERIFIED =
+  "Filmed reference, re-verified frame by frame with scripts/calibrate.mjs (271/271 frames tracked). Still one clip, one person, not clinically validated.";
 
 /** One hold length across the set, so the coach behaves the same everywhere. */
 const HOLD_MS = 15_000;
@@ -159,17 +166,31 @@ export const mobilityExercises: MobilityExercise[] = [
     hold: {
       slug: "standing-calf-stretch",
       name: "Calf Stretch",
-      // Measured: back knee held 170–174° while the front knee sat at 124–143°
-      // and stance separation stayed at 0.147–0.162 for 6.5s, against 0.001
-      // standing normally. Both thresholds sit clear of the setup phase, so
-      // stepping into the stance is what starts the timer.
-      signal: { kind: "splitStance", backKneeMin: 165, minSeparation: 0.13 },
+      // Re-measured against the October 2026 clip with scripts/calibrate.mjs,
+      // 271/271 frames tracked. Over the held phase:
+      //
+      //   back knee   167.4 – 174.6   (front knee 122.9 – 156.8)
+      //   separation  0.119 – 0.164   (0 standing normally)
+      //
+      // backKneeMin 165 sits 2.4° below the back knee's floor and 8.2° above
+      // the front knee's ceiling, so it separates the two legs cleanly.
+      //
+      // minSeparation was 0.13, which the first calibration run showed to be
+      // WRONG: a genuine hold dips to 0.119 at its shallowest, so the check
+      // was dropping out mid-stretch. 0.10 clears the hold's floor and still
+      // sits far above standing.
+      signal: { kind: "splitStance", backKneeMin: 165, minSeparation: 0.1 },
       targetReps: 3,
       hold: { minHoldMs: HOLD_MS },
       setupHint: "Stand side-on to the camera with your whole body and both feet in frame.",
     },
     conditions: ["achilles-tendinopathy", "plantar-fasciitis"],
-    provenance: FILMED,
+    reference: {
+      src: "/reference/standing-calf-stretch.mp4",
+      poster: "/reference/standing-calf-stretch.jpg",
+      watchFor: "Back heel stays down, back knee straight — only the front knee bends.",
+    },
+    provenance: FILMED_VERIFIED,
   },
   {
     slug: "standing-quad-stretch",

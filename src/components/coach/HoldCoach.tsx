@@ -26,6 +26,7 @@ import {
   type HoldSignal,
   type ReadabilityTracker,
 } from "@/components/coach/holdMath";
+import { ReferenceLoop, type ReferenceClip } from "@/components/coach/ReferenceLoop";
 import { logExercise } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { markCompletedToday } from "@/lib/localSession";
@@ -169,13 +170,15 @@ async function createLandmarker(
 
 export interface HoldCoachProps {
   config: HoldExerciseConfig;
+  /** Looping footage of the movement, shown beside the live feed. */
+  reference?: ReferenceClip;
   onFinish?: (result: { reps: number }) => void;
   finishLabel?: string;
 }
 
 type Status = "idle" | "requesting" | "loading-model" | "calibrating" | "tracking" | "error";
 
-export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
+export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoachProps) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -557,7 +560,15 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
 
   return (
     <div className="space-y-4 px-5 pt-6">
-      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl bg-ink">
+      <div className={reference ? "grid grid-cols-2 gap-2" : undefined}>
+        {reference && (
+          <ReferenceLoop clip={reference} className="aspect-[3/4] w-full" />
+        )}
+      <div
+        className={`relative w-full overflow-hidden rounded-2xl bg-ink ${
+          reference ? "aspect-[3/4]" : "aspect-[4/3]"
+        }`}
+      >
         <video ref={videoRef} muted playsInline className="h-full w-full -scale-x-100 object-cover" />
         <canvas ref={canvasRef} className="absolute inset-0 h-full w-full -scale-x-100" />
 
@@ -580,6 +591,16 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
           </div>
         )}
 
+      </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-moss" />
+          <span className="truncate font-sans text-[11px] text-ink/55">
+            Processed on-device — nothing uploaded
+          </span>
+        </span>
         <button
           type="button"
           onClick={() => {
@@ -589,24 +610,18 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
             if (!next) stopSpeaking();
           }}
           aria-pressed={voiceOn}
-          className="absolute right-2 bottom-2 rounded-full bg-ink/70 px-3 py-1.5 font-sans text-[11px] font-medium text-paper/90"
+          className="shrink-0 rounded-full border border-mist bg-white/60 px-3 py-1.5 font-sans text-[11px] font-medium text-ink/70"
         >
           {voiceOn ? "🔊 Voice on" : "🔇 Voice off"}
         </button>
-
-        <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-full bg-ink/70 px-2.5 py-1">
-          <span className="h-1.5 w-1.5 rounded-full bg-moss" />
-          <span className="font-sans text-[10px] font-medium text-paper/90">
-            Processed on-device — nothing uploaded
-          </span>
-        </div>
       </div>
 
       <div className="rounded-2xl border border-mist bg-white/60 p-4">
         <div className="flex items-baseline justify-between">
           <h3 className="font-sans text-sm font-semibold text-ink">{config.name} — live check</h3>
           <span className="font-mono text-sm font-semibold text-ink/50">
-            Rep {Math.min(ui.reps + 1, ui.targetReps)} of {ui.targetReps}
+            {isReps ? "Rep" : "Set"} {Math.min(ui.reps + 1, ui.targetReps)} of{" "}
+            {ui.targetReps}
           </span>
         </div>
 
