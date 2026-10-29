@@ -3,8 +3,10 @@
 // reloads instead of resetting to static mock data every time.
 
 const STORAGE_KEY = "mend:session-log:v1";
-const STREAK_BASELINE = 5; // days of streak "already banked" before local tracking started
-const PAIN_BASELINE = [6, 5, 5, 4, 3, 3, 2]; // mock history, most recent last
+// No seeded streak and no seeded pain history. Everything shown to the user is
+// something the user actually did. A rehab app that invents a downward pain
+// trend is making the one claim it has no right to make.
+const PAIN_WINDOW = 7;
 
 interface SessionLog {
   completedDates: string[]; // YYYY-MM-DD, sessions marked done
@@ -96,7 +98,7 @@ export function currentStreak(): number {
     streak += 1;
     cursor.setDate(cursor.getDate() - 1);
   }
-  return streak > 0 ? STREAK_BASELINE + streak : STREAK_BASELINE;
+  return streak;
 }
 
 export function logPain(value: number) {
@@ -111,12 +113,26 @@ export function todaysPain(): number | null {
   return value === undefined ? null : value;
 }
 
-/** Last 7 sessions of pain history: mock baseline with any locally-logged days appended/overridden. */
+/** The user's own last few pain check-ins, oldest first. Empty until they log one. */
 export const painHistory = memoized((): number[] => {
   const log = read();
-  const todaysEntry = log.painLog[todayKey()];
-  if (todaysEntry === undefined) return PAIN_BASELINE;
-  return [...PAIN_BASELINE.slice(1), todaysEntry];
+  return Object.keys(log.painLog)
+    .sort()
+    .slice(-PAIN_WINDOW)
+    .map((k) => log.painLog[k]);
+});
+
+/** Share of the last 7 days with a completed session. Null until there is a day to count. */
+export const weekAdherencePct = memoized((): number | null => {
+  const set = new Set(read().completedDates);
+  if (set.size === 0) return null;
+  let done = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    if (set.has(localDateKey(d))) done += 1;
+  }
+  return Math.round((done / 7) * 100);
 });
 
 /** Last 7 calendar days, oldest first, with whether a session was completed. */

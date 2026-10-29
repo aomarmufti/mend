@@ -23,11 +23,12 @@ import {
 import { logExercise } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { markCompletedToday } from "@/lib/localSession";
+import { VOICE, stopSpeaking } from "@/components/coach/coachVoice";
 
-const MEDIAPIPE_VERSION = "0.10.35";
-const WASM_BASE_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`;
-const MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+// Self-hosted so the coach works on a weak connection or none at all, and
+// so starting a health activity does not hand a third-party CDN the user's IP.
+const WASM_BASE_URL = "/mediapipe/wasm";
+const MODEL_URL = "/mediapipe/models/pose_landmarker_lite.task";
 
 const CALIBRATION_FRAMES = 30;
 const UI_INTERVAL_MS = 100;
@@ -152,12 +153,19 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
   const lastUiRef = useRef(0);
   const startedAtRef = useRef(0);
   const activeSideRef = useRef<"left" | "right" | null>(null);
+  // Audio fires on transitions only. Without these the cue would be re-spoken
+  // every frame it stayed true, which is ~60 times a second.
+  const spokenCueRef = useRef<HoldCue | null>(null);
+  const spokenCountRef = useRef<number | null>(null);
+  const spokenUnreadableRef = useRef(false);
+  const voiceOnRef = useRef(true);
 
   const holdConfig: HoldConfig = { ...DEFAULT_HOLD_CONFIG, ...config.hold };
 
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [ui, setUi] = useState<UiState>(() => initialUi(config));
+  const [voiceOn, setVoiceOn] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -295,8 +303,47 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
 
       const result = trackHold(holdTrackerRef.current, inPosition, now, holdConfig);
       holdTrackerRef.current = result.tracker;
+
+      // ---- spoken feedback -------------------------------------------------
+      if (voiceOnRef.current) {
+        const previousCue = spokenCueRef.current;
+        if (result.cue !== previousCue) {
+          if (result.cue === "holding" && previousCue !== "nearly") {
+            VOICE.enteredPosition();
+            spokenCountRef.current = null;
+          } else if (result.cue === "released-early") {
+            VOICE.releasedEarly();
+            spokenCountRef.current = null;
+          }
+          spokenCueRef.current = result.cue;
+        }
+        // Count the hold down out loud over its final seconds.
+        if (result.cue === "holding" || result.cue === "nearly") {
+          const left = Math.ceil((holdConfig.minHoldMs - result.elapsedMs) / 1000);
+          if (left > 0 && left <= 3 && spokenCountRef.current !== left) {
+            spokenCountRef.current = left;
+            VOICE.countdown(left);
+          }
+        }
+        if (resolved.unreadable && !resolved.inPosition) {
+          if (!spokenUnreadableRef.current) {
+            spokenUnreadableRef.current = true;
+            VOICE.unreadable();
+          }
+        } else {
+          spokenUnreadableRef.current = false;
+        }
+      }
+
       if (result.repBanked) {
-        repsRef.current = Math.min(repsRef.current + 1, config.targetReps);
+        // Count what was actually performed. Capping at the target silently
+        // discards honest work once the user passes it, and the recorded
+        // number has to match what the person did.
+        repsRef.current += 1;
+        if (voiceOnRef.current) {
+          VOICE.repBanked(repsRef.current, Math.max(0, config.targetReps - repsRef.current));
+        }
+        spokenCountRef.current = null;
       }
 
       drawFrame(canvas, video, landmarks, drawSide, result.cue);
@@ -341,6 +388,7 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
 
     return () => {
       cancelled = true;
+      stopSpeaking();
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       landmarkerRef.current?.close();
       landmarkerRef.current = null;
@@ -352,6 +400,7 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
   }, []);
 
   const endSession = useCallback(() => {
+    stopSpeaking();
     logExercise({
       conditionSlug: readActiveConditionSlug(),
       exerciseSlug: config.slug,
@@ -402,6 +451,20 @@ export function HoldCoach({ config, onFinish, finishLabel }: HoldCoachProps) {
             </span>
           </div>
         )}
+
+        <button
+          type="button"
+          onClick={() => {
+            const next = !voiceOn;
+            setVoiceOn(next);
+            voiceOnRef.current = next;
+            if (!next) stopSpeaking();
+          }}
+          aria-pressed={voiceOn}
+          className="absolute top-2 right-2 rounded-full bg-ink/70 px-3 py-1.5 font-sans text-[11px] font-medium text-paper/90"
+        >
+          {voiceOn ? "🔊 Voice on" : "🔇 Voice off"}
+        </button>
 
         <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-full bg-ink/70 px-2.5 py-1">
           <span className="h-1.5 w-1.5 rounded-full bg-moss" />

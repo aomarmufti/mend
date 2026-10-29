@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import type { Exercise } from "@/data/exercises";
 import { SUPPORTED_COACH_SLUG } from "@/data/exercises";
 import { markCompletedToday } from "@/lib/localSession";
+import { logExercise } from "@/lib/exerciseLog";
+import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { CheckIcon } from "@/components/icons";
 
 // Touches navigator.mediaDevices, so it can only run in the browser.
@@ -27,9 +29,31 @@ export function SessionRunner({ exercises }: { exercises: Exercise[] }) {
   const [index, setIndex] = useState(0);
   const [done, setDone] = useState(false);
   const [coaching, setCoaching] = useState(false);
+  const [startedAt] = useState(() => Date.now());
+  const loggedRef = useRef<Set<string>>(new Set());
+
+  // Marking an exercise done has to leave a record, or Today reports the day
+  // complete while Progress reports nothing happened. Reps are null-equivalent
+  // here: this is a self-reported completion, not a counted one, and the
+  // history must not imply otherwise.
+  const logManual = (exercise: Exercise) => {
+    if (loggedRef.current.has(exercise.slug)) return;
+    loggedRef.current.add(exercise.slug);
+    logExercise({
+      conditionSlug: readActiveConditionSlug(),
+      exerciseSlug: exercise.slug,
+      exerciseName: exercise.name,
+      reps: 0,
+      sets: 1,
+      durationMs: Date.now() - startedAt,
+      avgScore: null,
+      selfReported: true,
+    });
+  };
 
   const goNext = (isLast: boolean) => {
     setCoaching(false);
+    logManual(exercises[index]);
     if (isLast) {
       markCompletedToday();
       setDone(true);

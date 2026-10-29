@@ -104,15 +104,21 @@ export function SessionHistory() {
                       <p className="truncate font-sans text-sm font-medium text-ink">
                         {r.exerciseName}
                       </p>
+                      {r.selfReported && (
+                        <span className="shrink-0 rounded-full bg-mist px-2 py-0.5 font-sans text-[10px] font-semibold text-ink/55">
+                          self-reported
+                        </span>
+                      )}
                       {r.avgScore !== null && (
                         <span className="shrink-0 font-mono text-xs font-semibold text-pine">
                           {r.avgScore}%
                         </span>
                       )}
                     </div>
-                    <p className="mt-0.5 font-mono text-[11px] text-ink/45">
-                      {r.reps} reps · {r.sets} {r.sets === 1 ? "set" : "sets"} ·{" "}
-                      {formatDuration(r.durationMs)}
+                    <p className="mt-0.5 font-mono text-[11px] text-ink/55">
+                      {r.selfReported
+                        ? `Marked done · ${formatDuration(r.durationMs)}`
+                        : `${r.reps} reps counted · ${formatDuration(r.durationMs)}`}
                     </p>
                   </div>
                 ))}

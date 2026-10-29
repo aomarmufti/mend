@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { DeviceFrame } from "@/components/DeviceFrame";
 
@@ -11,7 +11,14 @@ import { DeviceFrame } from "@/components/DeviceFrame";
  */
 export function ShellChrome({ children }: { children: React.ReactNode }) {
   const [framed, setFramed] = useState(false);
+  const [showToggle, setShowToggle] = useState(false);
   const pathname = usePathname();
+
+  // Opt-in only (?demo=1). It is a fixed-position button that otherwise lands
+  // on top of the bottom nav's last tab and makes it untappable on every phone.
+  useEffect(() => {
+    setShowToggle(new URLSearchParams(window.location.search).has("demo"));
+  }, []);
   const isFocusedFlow = pathname?.startsWith("/session");
 
   if (isFocusedFlow) {
@@ -22,6 +29,7 @@ export function ShellChrome({ children }: { children: React.ReactNode }) {
     <div className={framed ? "min-h-screen bg-mist py-10" : "min-h-screen bg-paper"}>
       {framed ? <DeviceFrame>{children}</DeviceFrame> : children}
 
+      {showToggle && (
       <button
         type="button"
         onClick={() => setFramed((f) => !f)}
@@ -29,6 +37,7 @@ export function ShellChrome({ children }: { children: React.ReactNode }) {
       >
         {framed ? "Exit demo frame" : "Demo frame"}
       </button>
+      )}
     </div>
   );
 }
