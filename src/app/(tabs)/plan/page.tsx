@@ -4,7 +4,8 @@ import {
   exercisesByStage,
 } from "@/data/exercises";
 import { ExerciseListItem } from "@/components/library/ExerciseListItem";
-import { ConditionBanner, ProgrammeGate } from "@/components/ConditionBanner";
+import { PlanChips } from "@/components/plan/PlanChips";
+import { ProgrammeGate } from "@/components/ConditionBanner";
 
 export default function LibraryPage() {
   return (
@@ -12,12 +13,12 @@ export default function LibraryPage() {
       <div>
         <h1 className="font-display text-3xl">Plan</h1>
         <p className="mt-1 font-sans text-sm text-ink/60">
-          The NHS Lanarkshire PFPS programme, in three stages. Progress once the
-          current stage feels easy — this isn&apos;t a fixed weekly schedule.
+          Your exercises, stage by stage. Progress once the current stage feels
+          easy; this isn&apos;t a fixed weekly schedule.
         </p>
       </div>
 
-      <ConditionBanner />
+      <PlanChips />
 
       <ProgrammeGate>
         <div className="space-y-7">

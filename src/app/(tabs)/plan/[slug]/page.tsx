@@ -26,7 +26,7 @@ export default async function ExerciseDetailPage({
   return (
     <div className="space-y-5 px-5 pt-6">
       <Link href="/plan" className="font-sans text-sm text-ink/50">
-        ← Library
+        ← Plan
       </Link>
 
       {exercise.slug === SUPPORTED_COACH_SLUG ? (
@@ -44,7 +44,7 @@ export default async function ExerciseDetailPage({
       </div>
 
       <div className="rounded-2xl border border-mist bg-white/60 p-4">
-        <h3 className="font-sans text-sm font-semibold text-ink">Position</h3>
+        <h3 className="font-sans text-sm font-semibold text-ink">What you do</h3>
         <p className="mt-1.5 font-sans text-sm leading-relaxed text-ink/70">
           {exercise.position}
         </p>
@@ -68,11 +68,11 @@ export default async function ExerciseDetailPage({
       {exercise.cameraCoach ? (
         <Link
           href={`/coach?exercise=${exercise.slug}`}
-          className="flex items-center justify-between rounded-2xl bg-pine px-4 py-3.5 text-paper"
+          className="flex min-h-12 items-center justify-center rounded-full bg-gradient-to-r from-mint to-mint-deep px-4 py-3.5 text-white shadow-[0_8px_20px_rgba(47,166,127,0.3)]"
         >
           <span className="font-sans text-sm font-medium">
             {hasCameraCheck(exercise.slug)
-              ? "Try this with the camera coach"
+              ? "Start with camera coach"
               : "See why there's no camera check yet"}
           </span>
         </Link>

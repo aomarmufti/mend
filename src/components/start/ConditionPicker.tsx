@@ -2,13 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import type { Condition } from "@/data/conditions";
-import { writeActiveCondition } from "@/lib/activeCondition";
+import { addPlan } from "@/lib/plans";
 
 export function ConditionPicker({ conditions }: { conditions: Condition[] }) {
   const router = useRouter();
 
   const choose = (condition: Condition) => {
-    writeActiveCondition(condition.slug);
+    addPlan(condition.slug);
     // Conditions without a sourced programme have nothing to run yet, so send
     // them to the library, which explains that, rather than to an empty Today.
     router.push(condition.programme ? "/today" : "/plan");

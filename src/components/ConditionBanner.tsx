@@ -1,12 +1,10 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
 import Link from "next/link";
 import { DEFAULT_CONDITION_SLUG, getCondition } from "@/data/conditions";
-import { readActiveConditionSlug } from "@/lib/activeCondition";
+import { usePlans } from "@/lib/plans";
+import { activePlan } from "@/lib/plansModel";
 import { getMobilityForCondition } from "@/data/mobilityExercises";
-
-const noopSubscribe = () => () => {};
 
 /**
  * The active condition lives in localStorage. The server snapshot is the
@@ -14,12 +12,11 @@ const noopSubscribe = () => () => {};
  * the client corrects it on hydration without a layout shift.
  */
 export function useActiveCondition() {
-  const slug = useSyncExternalStore(
-    noopSubscribe,
-    readActiveConditionSlug,
-    () => DEFAULT_CONDITION_SLUG
+  const plan = activePlan(usePlans());
+  return (
+    getCondition(plan?.conditionSlug ?? DEFAULT_CONDITION_SLUG) ??
+    getCondition(DEFAULT_CONDITION_SLUG)!
   );
-  return getCondition(slug) ?? getCondition(DEFAULT_CONDITION_SLUG)!;
 }
 
 export function ConditionBanner() {
