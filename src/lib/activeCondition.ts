@@ -1,6 +1,7 @@
 "use client";
 
 import { DEFAULT_CONDITION_SLUG, getCondition, type Condition } from "@/data/conditions";
+import { writeRaw } from "@/lib/store";
 
 const KEY = "mend:active-condition:v1";
 
@@ -30,11 +31,8 @@ export function readActiveCondition(): Condition {
   );
 }
 
-export function writeActiveCondition(slug: string) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(KEY, slug);
-  } catch {
-    /* private mode / quota — the app still works, it just won't remember */
-  }
+export function writeActiveCondition(slug: string | null) {
+  writeRaw(KEY, slug);
 }
+
+export const ACTIVE_CONDITION_KEY = KEY;
