@@ -1,14 +1,27 @@
 @import "tailwindcss";
 
+/* Soft Vitality design tokens. Legacy names (paper, ink, pine, moss, ...) are
+   kept so existing screens keep working, but now carry the new palette. */
 :root {
-  --paper: #F5F3ED;
-  --ink: #17241F;
-  --pine: #1C332B;
-  --moss: #4B7A63;
-  --amber: #D98A3A;
+  --paper: #F6FAF7;
+  --ink: #1E2A32;
+  --pine: #1E8A68;
+  --moss: #1B7F5C;
+  --amber: #9A6200;
   --coral: #BE4B3C;
-  --sand: #E7DFCC;
-  --mist: #D8D3C4;
+  --sand: #E4EEEA;
+  --mist: #E3EBEF;
+
+  --mint: #34B58A;
+  --mint-deep: #2FA67F;
+  --sky: #4A9FE0;
+  --amber-soft: #FFF0D6;
+  --success: #1B7F5C;
+  --success-soft: #DDF5EA;
+  --chip: #EAF0F3;
+  --night: #0E2A26;
+  --bg-from: #F3F8F4;
+  --bg-to: #EAF3FB;
 }
 
 @theme inline {
@@ -20,13 +33,28 @@
   --color-coral: var(--coral);
   --color-sand: var(--sand);
   --color-mist: var(--mist);
+  --color-mint: var(--mint);
+  --color-mint-deep: var(--mint-deep);
+  --color-sky: var(--sky);
+  --color-amber-soft: var(--amber-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-chip: var(--chip);
+  --color-night: var(--night);
 
-  --font-display: var(--font-instrument-serif), Georgia, serif;
-  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-display: var(--font-jakarta), system-ui, sans-serif;
+  --font-sans: var(--font-jakarta), system-ui, sans-serif;
   --font-mono: var(--font-ibm-plex-mono), ui-monospace, monospace;
 }
 
 body {
-  background: var(--paper);
+  min-height: 100vh;
+  background: linear-gradient(160deg, var(--bg-from), var(--bg-to)) fixed;
   color: var(--ink);
+}
+
+/* Headlines were a serif; Jakarta needs weight and tighter tracking instead. */
+.font-display {
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }

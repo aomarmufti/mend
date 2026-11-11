@@ -10,7 +10,7 @@ export default function LibraryPage() {
   return (
     <div className="space-y-7 px-5 pt-8">
       <div>
-        <h1 className="font-display text-3xl">Library</h1>
+        <h1 className="font-display text-3xl">Plan</h1>
         <p className="mt-1 font-sans text-sm text-ink/60">
           The NHS Lanarkshire PFPS programme, in three stages. Progress once the
           current stage feels easy — this isn&apos;t a fixed weekly schedule.

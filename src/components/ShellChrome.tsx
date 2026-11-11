@@ -26,14 +26,14 @@ export function ShellChrome({ children }: { children: React.ReactNode }) {
     () => new URLSearchParams(window.location.search).has("demo"),
     () => false,
   );
-  const isFocusedFlow = pathname?.startsWith("/session");
+  const isFocusedFlow = pathname?.startsWith("/session") || pathname?.startsWith("/coach");
 
   if (isFocusedFlow) {
-    return <div className="min-h-screen bg-paper">{children}</div>;
+    return <div className="min-h-screen">{children}</div>;
   }
 
   return (
-    <div className={framed ? "min-h-screen bg-mist py-10" : "min-h-screen bg-paper"}>
+    <div className={framed ? "min-h-screen py-10" : "min-h-screen"}>
       {framed ? <DeviceFrame>{children}</DeviceFrame> : children}
 
       {showToggle && (

@@ -25,7 +25,7 @@ export default async function ExerciseDetailPage({
 
   return (
     <div className="space-y-5 px-5 pt-6">
-      <Link href="/library" className="font-sans text-sm text-ink/50">
+      <Link href="/plan" className="font-sans text-sm text-ink/50">
         ← Library
       </Link>
 

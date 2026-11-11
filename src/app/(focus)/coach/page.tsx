@@ -20,13 +20,16 @@ export default async function CoachPage({
 
   return (
     <div className="space-y-1">
-      <div className="flex items-center justify-between px-5 pt-8">
-        <div>
-          <h1 className="font-display text-3xl">Coach</h1>
-          <p className="mt-1 font-sans text-sm text-ink/60">
-            Live form feedback while you exercise — free, no account needed.
-          </p>
-        </div>
+      <div className="px-5 pt-[calc(1.5rem+env(safe-area-inset-top))]">
+        <Link href="/plan" className="font-sans text-sm font-medium text-ink/50">
+          ← Plan
+        </Link>
+        <h1 className="mt-2 font-display text-3xl">
+          {requested?.name ?? mobility?.name ?? "Coach"}
+        </h1>
+        <p className="mt-1 font-sans text-sm text-ink/60">
+          Live form feedback while you exercise. Free, no account needed.
+        </p>
       </div>
 
       {coached ? (
@@ -59,10 +62,10 @@ export default async function CoachPage({
               </ul>
             )}
             <Link
-              href="/coach"
+              href="/plan"
               className="mt-4 inline-flex items-center justify-center rounded-xl bg-pine px-4 py-2.5 font-sans text-sm font-semibold text-paper transition hover:opacity-90"
             >
-              Back to Coach
+              Back to Plan
             </Link>
           </div>
         </div>
@@ -86,10 +89,10 @@ export default async function CoachPage({
               </p>
             )}
             <Link
-              href="/coach"
+              href="/plan"
               className="mt-4 inline-flex items-center justify-center rounded-xl bg-pine px-4 py-2.5 font-sans text-sm font-semibold text-paper transition hover:opacity-90"
             >
-              Back to Coach
+              Back to Plan
             </Link>
           </div>
         </div>
@@ -109,7 +112,7 @@ export default async function CoachPage({
               Heel Slides is the current working demo — try that one instead.
             </p>
             <Link
-              href="/coach"
+              href="/plan"
               className="mt-4 inline-flex items-center justify-center rounded-xl bg-pine px-4 py-2.5 font-sans text-sm font-semibold text-paper transition hover:opacity-90"
             >
               Try Heel Slides Coach

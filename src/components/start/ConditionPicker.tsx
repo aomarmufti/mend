@@ -11,7 +11,7 @@ export function ConditionPicker({ conditions }: { conditions: Condition[] }) {
     writeActiveCondition(condition.slug);
     // Conditions without a sourced programme have nothing to run yet, so send
     // them to the library, which explains that, rather than to an empty Today.
-    router.push(condition.programme ? "/today" : "/library");
+    router.push(condition.programme ? "/today" : "/plan");
   };
 
   return (

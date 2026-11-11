@@ -5,7 +5,7 @@ import { hasCameraCheck } from "@/data/coachedExercises";
 export function ExerciseListItem({ exercise }: { exercise: Exercise }) {
   return (
     <Link
-      href={`/library/${exercise.slug}`}
+      href={`/plan/${exercise.slug}`}
       className="flex items-center justify-between gap-3 rounded-xl border border-mist bg-white/60 px-4 py-3 transition hover:border-moss/40"
     >
       <div>
