@@ -12,7 +12,7 @@ export function WelcomeScreen() {
 
   return (
     <div className="relative mx-auto flex min-h-[100dvh] max-w-md flex-col overflow-hidden bg-night text-white">
-      <LiveCoachPreview className="absolute inset-x-0 top-0 h-[60%]" />
+      <LiveCoachPreview className="absolute inset-x-0 top-0 h-[60dvh]" />
       <div
         className="pointer-events-none absolute inset-0"
         style={{

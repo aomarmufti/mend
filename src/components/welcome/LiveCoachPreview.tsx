@@ -31,7 +31,7 @@ export function LiveCoachPreview({
   poster = "/reference/standing-calf-stretch.jpg",
   track = "/reference/standing-calf-stretch.landmarks.json",
   objectPosition = [0.5, 0.82],
-  className = "",
+  className = "relative",
 }: {
   src?: string;
   poster?: string;
@@ -141,7 +141,7 @@ export function LiveCoachPreview({
   }, [track, px, py]);
 
   return (
-    <div ref={boxRef} className={`relative overflow-hidden bg-night ${className}`}>
+    <div ref={boxRef} className={`overflow-hidden bg-night ${className}`}>
       <video
         ref={videoRef}
         src={src}

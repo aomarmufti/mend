@@ -50,7 +50,7 @@ export function TodayScreen() {
           </h1>
         </div>
         <Pill tone="soft" className="bg-white shadow-[0_4px_14px_rgba(60,100,120,0.10)]">
-          {streak} day streak
+          {streak > 0 ? `${streak} day streak` : "Start a streak"}
         </Pill>
       </div>
 

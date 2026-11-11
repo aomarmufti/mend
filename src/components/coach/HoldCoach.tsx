@@ -643,7 +643,9 @@ export function HoldCoach({
       : `${config.targetReps} sets of ${targetSec}s`;
   const ringPct = isReps
     ? (ui.reps / Math.max(1, config.targetReps)) * 100
-    : (ui.elapsedSec / Math.max(1, targetSec)) * 100;
+    : ui.cue === "banked"
+      ? 100
+      : (ui.elapsedSec / Math.max(1, targetSec)) * 100;
   const messageColor =
     ui.tone === "good" ? "text-success" : ui.tone === "bad" ? "text-coral" : ui.tone === "warn" ? "text-amber" : "text-ink";
 
@@ -768,7 +770,7 @@ export function HoldCoach({
               </div>
               <div className="rounded-full bg-white/92 p-0.5">
                 <Ring pct={ringPct} size={78} color={ui.inPosition ? "#2FA67F" : "#D98A3A"}>
-                  {isReps ? ui.reps : `${ui.elapsedSec}s`}
+                  {isReps ? ui.reps : ui.cue === "banked" ? "✓" : `${ui.elapsedSec}s`}
                 </Ring>
               </div>
             </div>
@@ -780,7 +782,11 @@ export function HoldCoach({
               <div className="mt-2 flex justify-between font-sans text-[11px] text-ink/55">
                 <span>{lastSetLine}</span>
                 <span>
-                  {isReps ? `${ui.reps} / ${config.targetReps}` : `Hold ${ui.elapsedSec} / ${targetSec}s`}
+                  {isReps
+                    ? `${ui.reps} / ${config.targetReps}`
+                    : ui.cue === "banked"
+                      ? "Release"
+                      : `Hold ${Math.min(ui.elapsedSec, targetSec)} / ${targetSec}s`}
                 </span>
               </div>
               <button
@@ -798,7 +804,7 @@ export function HoldCoach({
           <div className="flex flex-1 flex-col justify-end">
             <div className="rounded-[26px] bg-white p-5 text-ink">
               <p className="font-display text-2xl font-extrabold">
-                {ui.reps >= config.targetReps ? "Nice work." : ui.reps > 0 ? "Saved what you did." : "Nothing counted yet."}
+                {ui.reps >= config.targetReps ? "Nice work." : ui.reps > 0 ? "Here's what you did." : "Nothing counted yet."}
               </p>
               <p className="mt-1 font-sans text-sm text-ink/60">
                 {ui.reps} of {config.targetReps} {isReps ? "reps" : "sets"}

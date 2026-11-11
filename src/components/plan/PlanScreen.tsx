@@ -82,7 +82,7 @@ export function PlanScreen() {
             </p>
           </Card>
 
-          <div className="grid gap-2">
+          <div className="flex flex-col gap-2">
             {current.exercises.map((e) => (
               <ExerciseRow key={e.slug} exercise={e} done={done.has(e.slug)} locked={locked(e.slug)} />
             ))}
@@ -121,7 +121,7 @@ export function PlanScreen() {
               </button>
               {showEarlier &&
                 shape.stages.slice(0, stageIndex).map((s) => (
-                  <div key={s.stage} className="mt-2 grid gap-2">
+                  <div key={s.stage} className="mt-2 flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                       <p className={eyebrow}>{s.stage} stage</p>
                       <button
@@ -152,7 +152,7 @@ export function PlanScreen() {
       )}
 
       {shape.stretches.length > 0 && (
-        <div className="grid gap-2 pt-1">
+        <div className="flex flex-col gap-2 pt-1">
           <p className={eyebrow}>{shape.staged ? "Stretches" : "Your stretches"}</p>
           {shape.stretches.map((e) => (
             <ExerciseRow key={e.slug} exercise={e} done={done.has(e.slug)} locked={locked(e.slug)} />

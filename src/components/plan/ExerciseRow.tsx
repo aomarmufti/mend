@@ -16,7 +16,7 @@ export function ExerciseRow({
   return (
     <Link
       href={locked ? "#unlock" : `/exercise/${exercise.slug}?from=${from}`}
-      className="flex items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 shadow-[0_4px_14px_rgba(60,100,120,0.10)]"
+      className="flex min-w-0 items-center gap-2.5 rounded-2xl bg-white px-3 py-2.5 shadow-[0_4px_14px_rgba(60,100,120,0.10)]"
     >
       {locked ? (
         <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#E7EDF0] text-ink/40">
