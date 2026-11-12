@@ -1,4 +1,4 @@
-# Mend
+# Reknit
 
 A prototype rehab app for patellofemoral pain syndrome (PFPS), piloting the
 NHS Lanarkshire 8-exercise programme. Next.js (App Router) + TypeScript +

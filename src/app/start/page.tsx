@@ -42,7 +42,7 @@ export default function StartPage() {
       </div>
 
       <p className="mt-6 font-sans text-[11px] leading-relaxed text-ink/40">
-        Mend is a self-management aid, not a diagnosis. If you do not know what
+        Reknit is a self-management aid, not a diagnosis. If you do not know what
         is wrong, or your pain followed a significant injury, see a clinician
         before starting any programme.
       </p>
