@@ -74,7 +74,7 @@ export function ProgressScreen() {
   const share = async () => {
     const area = active?.shape.condition.name ?? "Rehab";
     const lines = [
-      `Mend progress: ${area}`,
+      `Reknit progress: ${area}`,
       `Days trained: ${days.size} (${thisMonth} this month)`,
       change ? `Pain: ${change.start}/10 at the start, ${change.now}/10 now` : "Pain: not enough check-ins yet",
       best ? `Best hold: ${formatHold(best)}` : null,
@@ -91,7 +91,7 @@ export function ProgressScreen() {
     const text = lines.join("\n");
     try {
       if (navigator.share) {
-        await navigator.share({ title: "Mend progress", text });
+        await navigator.share({ title: "Reknit progress", text });
         setShared("Shared.");
       } else {
         await navigator.clipboard.writeText(text);

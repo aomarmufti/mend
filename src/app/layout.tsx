@@ -16,7 +16,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Mend — camera-coached rehab",
+  title: "Reknit — camera-coached rehab",
   description: "A calm, clinical companion for patellofemoral pain rehab.",
 };
 

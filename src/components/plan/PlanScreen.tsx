@@ -144,7 +144,7 @@ export function PlanScreen() {
         <Card>
           <p className="font-sans text-sm font-extrabold">General mobility work</p>
           <p className="mt-1 font-sans text-xs leading-relaxed text-ink/60">
-            Mend only prescribes programmes transcribed from a clinical source, and this condition
+            Reknit only prescribes programmes transcribed from a clinical source, and this condition
             does not have one yet. These stretches are relevant to the area and the camera can
             check your form on them, but they are not a prescription.
           </p>

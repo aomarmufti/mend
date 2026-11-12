@@ -1,64 +1,109 @@
+import { useId } from "react";
+
 /**
- * Mend's brand mark.
+ * Reknit's brand mark.
  *
- * The glyph is a goniometer — the hinged protractor a physiotherapist uses to
- * measure a joint's range of motion. A pivot, a fixed reference arm, a moving
- * arm, and the swept angle between them. It is the one instrument every
- * clinician in this field already recognises, and it happens to describe
- * exactly what the camera coach does: fix a pivot on a joint and measure the
- * angle it travels through.
+ * It keeps the goniometer from the Mend mark — the hinged protractor a
+ * physiotherapist uses to measure a joint's range of motion: a pivot, a fixed
+ * reference arm and a moving arm. What changed is the swept arc. It is now a
+ * thread that weaves through the joint, over the reference arm and under the
+ * moving arm, the way a stitch passes through the fabric. The thread is the
+ * measured angle and the knitting-back-together in one stroke.
  *
- * Drawn on a 32-unit grid so the same geometry serves the favicon, the app
- * icon and a large header without redrawing. Strokes use `currentColor` where
- * they can, so the mark inherits whatever it sits on.
+ * The over/under is done with masks, not with background-coloured halos, so
+ * the mark stays transparent and sits on any surface. Drawn on a 32-unit grid
+ * so the same geometry serves the favicon, the app icon and a large header.
+ * Arms use `currentColor`, so the mark inherits whatever it sits on.
+ *
+ * Geometry (pivot at 6,26): reference arm along the horizontal, moving arm at
+ * 46°, thread on a radius of 13 from -14° to 66°.
  */
+
+/** Shared path data, so `app/icon.tsx` can draw the same mark. */
+export const MARK = {
+  referenceArm: "M6 26H29",
+  movingArm: "M6 26 21.98 9.46",
+  thread: "M18.61 29.14A13 13 0 0 0 11.29 14.12",
+  /** Where the thread crosses over the reference arm: cut out of the arm. */
+  threadOverGap: "M18.8 28.26A13 13 0 0 0 18.72 23.3",
+  /** Where the thread passes under the moving arm: cut out of the thread. */
+  threadUnderGap: "M12.94 18.81 17.12 14.49",
+  gapWidth: 4.6,
+  strokeWidth: 2.6,
+  pivot: { cx: 6, cy: 26, r: 3.5 },
+} as const;
+
+export const BRAND_ACCENT = "#D98A3A";
 
 interface MarkProps {
   className?: string;
-  /** Pivot and swept-arc accent. Defaults to the brand amber. */
+  /** Thread and pivot accent. Defaults to the brand amber. */
   accent?: string;
   title?: string;
+  style?: React.CSSProperties;
 }
 
-export function LogoMark({ className, accent = "#D98A3A", title }: MarkProps) {
+export function LogoMark({
+  className,
+  accent = BRAND_ACCENT,
+  title,
+  style,
+}: MarkProps) {
+  const id = useId();
+  const overId = `${id}-over`;
+  const underId = `${id}-under`;
+
   return (
     <svg
       viewBox="0 0 32 32"
       fill="none"
       className={className}
+      style={style}
       role={title ? "img" : undefined}
       aria-hidden={title ? undefined : true}
       aria-label={title}
     >
       {title ? <title>{title}</title> : null}
 
-      {/* Fixed reference arm, along the horizontal. */}
+      <defs>
+        <mask id={overId} maskUnits="userSpaceOnUse" x="0" y="0" width="32" height="32">
+          <rect width="32" height="32" fill="#fff" />
+          <path d={MARK.threadOverGap} stroke="#000" strokeWidth={MARK.gapWidth} />
+        </mask>
+        <mask id={underId} maskUnits="userSpaceOnUse" x="0" y="0" width="32" height="32">
+          <rect width="32" height="32" fill="#fff" />
+          <path d={MARK.threadUnderGap} stroke="#000" strokeWidth={MARK.gapWidth} />
+        </mask>
+      </defs>
+
+      {/* Fixed reference arm — the thread passes over it. */}
       <path
-        d="M6.0 26.0H29"
+        d={MARK.referenceArm}
         stroke="currentColor"
-        strokeWidth="2.6"
+        strokeWidth={MARK.strokeWidth}
         strokeLinecap="round"
+        mask={`url(#${overId})`}
       />
 
       {/* Moving arm, swung up through the measured angle. */}
       <path
-        d="M6.0 26.0 21.98 9.46"
+        d={MARK.movingArm}
         stroke="currentColor"
-        strokeWidth="2.6"
+        strokeWidth={MARK.strokeWidth}
         strokeLinecap="round"
       />
 
-      {/* The swept angle itself — radius 9.5 from the pivot, reference arm to
-          moving arm. This is the measurement, so it carries the accent. */}
+      {/* The thread: the swept angle, stitched through both arms. */}
       <path
-        d="M15.50 26.00A9.5 9.5 0 0 0 12.60 19.17"
+        d={MARK.thread}
         stroke={accent}
-        strokeWidth="2.8"
+        strokeWidth={MARK.strokeWidth}
         strokeLinecap="round"
+        mask={`url(#${underId})`}
       />
 
       {/* The pivot: the tracked joint. */}
-      <circle cx="6.0" cy="26.0" r="3.5" fill={accent} />
+      <circle {...MARK.pivot} fill={accent} />
     </svg>
   );
 }
@@ -75,7 +120,7 @@ interface LogoProps {
 export function Logo({
   className = "",
   size = 28,
-  accent = "#D98A3A",
+  accent = BRAND_ACCENT,
   markOnly = false,
 }: LogoProps) {
   return (
@@ -83,16 +128,16 @@ export function Logo({
       <LogoMark
         accent={accent}
         className="shrink-0"
-        title={markOnly ? "Mend" : undefined}
-        // Inline so the mark can be sized independently of surrounding text.
-        {...{ style: { width: size, height: size } }}
+        title={markOnly ? "Reknit" : undefined}
+        style={{ width: size, height: size }}
       />
       {!markOnly && (
         <span
           className="font-display leading-none tracking-tight"
           style={{ fontSize: size * 0.95 }}
         >
-          mend
+          {/* The prefix is set lighter: re- is the return, knit is the work. */}
+          <span style={{ fontWeight: 500 }}>re</span>knit
         </span>
       )}
     </span>

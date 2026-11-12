@@ -73,7 +73,7 @@ export function AreaPicker({ adding }: { adding: boolean }) {
         Not listed yet? Tap a coming-soon area and we will tell you when it is ready.
       </p>
       <p className="mt-3 text-center font-sans text-[11px] leading-relaxed text-ink/40">
-        Mend is a self-management aid, not a diagnosis. If your pain followed a significant injury,
+        Reknit is a self-management aid, not a diagnosis. If your pain followed a significant injury,
         see a clinician first.
       </p>
     </div>
