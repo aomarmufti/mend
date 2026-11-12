@@ -16,6 +16,9 @@ import { btnPrimary } from "@/components/ui/kit";
 const WASM_BASE_URL = "/mediapipe/wasm";
 const MODEL_URL = "/mediapipe/models/pose_landmarker_lite.task";
 const RUN_MS = 3000;
+/** Keep going past RUN_MS until this many frames, so a slow first frame (shader warm-up) isn't the whole story. */
+const MIN_FRAMES = 10;
+const MAX_RUN_MS = 15000;
 
 type Delegate = "GPU" | "CPU";
 type Source = "video" | "canvas";
@@ -26,6 +29,9 @@ interface Run {
   found: number;
   errors: number;
   firstError: string | null;
+  /** First detection (includes warm-up), then the median of the rest, in ms. */
+  firstMs: number | null;
+  steadyMs: number | null;
   loadError: string | null;
 }
 
@@ -148,6 +154,8 @@ export function CameraCheck() {
           errors: 0,
           firstError: null,
           loadError: null,
+          firstMs: null,
+          steadyMs: null,
         };
         setStatus(`Testing ${run.label}… stand where the whole of you is visible`);
         let lm: PoseLandmarkerType | null = null;
@@ -162,8 +170,11 @@ export function CameraCheck() {
           run.loadError = short(err);
         }
         if (lm) {
-          const end = performance.now() + RUN_MS;
-          while (performance.now() < end && !cancelled) {
+          const start = performance.now();
+          const times: number[] = [];
+          while (!cancelled) {
+            const elapsed = performance.now() - start;
+            if (elapsed > MAX_RUN_MS || (elapsed > RUN_MS && run.frames >= MIN_FRAMES)) break;
             await new Promise((r) => requestAnimationFrame(r));
             run.frames++;
             try {
@@ -172,7 +183,9 @@ export function CameraCheck() {
                 fctx.drawImage(video, 0, 0, sw, sh);
                 input = frameCanvas;
               }
-              const r = lm.detectForVideo(input, performance.now());
+              const t = performance.now();
+              const r = lm.detectForVideo(input, t);
+              times.push(performance.now() - t);
               if (r.landmarks[0]) {
                 run.found++;
                 lastPose = r.landmarks[0];
@@ -183,6 +196,11 @@ export function CameraCheck() {
             }
           }
           lm.close();
+          if (times.length) {
+            run.firstMs = Math.round(times[0]);
+            const rest = times.slice(1).sort((a, b) => a - b);
+            run.steadyMs = rest.length ? Math.round(rest[Math.floor(rest.length / 2)]) : null;
+          }
         }
         results.push(run);
         if (!cancelled) setRuns([...results]);
@@ -214,7 +232,7 @@ export function CameraCheck() {
     ...lines,
     ...runs.map(
       (r) =>
-        `${r.label}: ${r.loadError ? `LOAD FAILED ${r.loadError}` : `frames ${r.frames} · found ${r.found} · errors ${r.errors}${r.firstError ? ` · first error: ${r.firstError}` : ""}`}`,
+        `${r.label}: ${r.loadError ? `LOAD FAILED ${r.loadError}` : `frames ${r.frames} · found ${r.found} · errors ${r.errors} · first frame ${r.firstMs ?? "–"} ms, then ${r.steadyMs ?? "–"} ms/frame${r.firstError ? ` · first error: ${r.firstError}` : ""}`}`,
     ),
   ].join("\n");
 
@@ -239,7 +257,7 @@ export function CameraCheck() {
           <li key={r.label} className="flex justify-between rounded-xl bg-white/10 px-3 py-2 font-sans text-sm">
             <span className="font-bold">{r.label}</span>
             <span className={r.found > 0 ? "text-mint" : "text-amber"}>
-              {r.loadError ? "failed to load" : `found you in ${r.found} of ${r.frames} frames${r.errors ? `, ${r.errors} errors` : ""}`}
+              {r.loadError ? "failed to load" : `found you in ${r.found} of ${r.frames} frames${r.steadyMs !== null ? ` · ${r.steadyMs} ms each` : ""}${r.errors ? `, ${r.errors} errors` : ""}`}
             </span>
           </li>
         ))}

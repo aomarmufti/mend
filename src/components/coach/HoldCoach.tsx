@@ -69,6 +69,15 @@ const GPU_EMPTY_FRAMES = 45;
 const GPU_ERROR_FRAMES = 8;
 const CPU_ERROR_FRAMES = 30;
 /**
+ * A GPU model that works but is slow is worse than the CPU one: on an Intel
+ * Mac in Safari the GPU took seconds per frame where the CPU took ~120 ms.
+ * After a short warm-up, if the median GPU detection is slower than this,
+ * switch to the CPU once.
+ */
+const GPU_WARMUP_FRAMES = 5;
+const GPU_SLOW_SAMPLES = 10;
+const GPU_SLOW_MS = 150;
+/**
  * Frames go to the model through a 2D canvas, not the <video> element.
  * Uploading a camera-backed <video> straight into WebGL yields blank frames
  * on some browser and GPU combinations (Safari among them), so the model
@@ -308,6 +317,7 @@ export function HoldCoach({
   const lastSeenRef = useRef(0);
   const frameCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastDetectAtRef = useRef(0);
+  const detectMsRef = useRef<number[]>([]);
 
   const holdConfig: HoldConfig = { ...DEFAULT_HOLD_CONFIG, ...config.hold };
   const repConfig: RepConfig = { ...DEFAULT_REP_CONFIG, ...config.rep };
@@ -369,6 +379,7 @@ export function HoldCoach({
         delegateRef.current = "CPU";
         framesRef.current = 0;
         hitsRef.current = 0;
+        detectMsRef.current = [];
         errorRunRef.current = 0;
         lastVideoTimeRef.current = -1;
       } catch (err) {
@@ -484,7 +495,17 @@ export function HoldCoach({
             fc.height = fh;
           }
           fc.getContext("2d")?.drawImage(video, 0, 0, fw, fh);
+          const t0 = performance.now();
           const result = landmarker.detectForVideo(fc, now);
+          if (delegateRef.current === "GPU" && framesRef.current > GPU_WARMUP_FRAMES) {
+            const ms = detectMsRef.current;
+            ms.push(performance.now() - t0);
+            if (ms.length >= GPU_SLOW_SAMPLES) {
+              const median = [...ms].sort((a, b) => a - b)[Math.floor(ms.length / 2)];
+              detectMsRef.current = [];
+              if (median > GPU_SLOW_MS) void fallBackToCpu(`GPU pose model is slow (${Math.round(median)} ms a frame)`);
+            }
+          }
           landmarks = result.landmarks[0] ?? null;
           lastLandmarksRef.current = landmarks;
           errorRunRef.current = 0;
