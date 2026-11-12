@@ -30,7 +30,18 @@ import { ReferenceLoop, type ReferenceClip } from "@/components/coach/ReferenceL
 import { logExercise } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { markCompletedToday } from "@/lib/localSession";
-import { VOICE, stopSpeaking, tone } from "@/components/coach/coachVoice";
+import { VOICE, speak, stopSpeaking, tone } from "@/components/coach/coachVoice";
+import {
+  DEFAULT_SETUP,
+  HINT_COPY,
+  assessSetup,
+  initialGate,
+  stepGate,
+  type GateState,
+  type HintId,
+  type SetupCheck,
+  type SetupSpec,
+} from "@/components/coach/setupCheck";
 
 // Self-hosted so the coach works on a weak connection or none at all, and
 // so starting a health activity does not hand a third-party CDN the user's IP.
@@ -57,6 +68,8 @@ export interface HoldExerciseConfig {
   rep?: Partial<RepConfig>;
   /** Shown once, before calibration — how to position the camera. */
   setupHint: string;
+  /** Line-up expectations (which way round, how big in frame). */
+  setup?: Partial<SetupSpec>;
 }
 
 interface Baselines {
@@ -176,7 +189,20 @@ export interface HoldCoachProps {
   finishLabel?: string;
 }
 
-type Status = "idle" | "requesting" | "loading-model" | "calibrating" | "tracking" | "error";
+type Status =
+  | "idle"
+  | "requesting"
+  | "loading-model"
+  | "lining-up"
+  | "calibrating"
+  | "tracking"
+  | "error";
+
+interface LineupUi {
+  hint: HintId;
+  count: number | null;
+  checks: SetupCheck[];
+}
 
 export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoachProps) {
   const router = useRouter();
@@ -208,6 +234,7 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
   const formSumRef = useRef(0);
   const formCountRef = useRef(0);
   const lastUiRef = useRef(0);
+  const lastLineupSigRef = useRef("");
   const startedAtRef = useRef(0);
   const activeSideRef = useRef<"left" | "right" | null>(null);
   // Audio fires on transitions only. Without these the cue would be re-spoken
@@ -221,7 +248,26 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
   const repConfig: RepConfig = { ...DEFAULT_REP_CONFIG, ...config.rep };
   const isReps = config.mode === "reps";
 
-  const [status, setStatus] = useState<Status>("idle");
+  const [status, setStatusState] = useState<Status>("idle");
+  const statusRef = useRef<Status>("idle");
+  const setStatus = useCallback((next: Status) => {
+    statusRef.current = next;
+    setStatusState(next);
+  }, []);
+  const gateRef = useRef<GateState>(initialGate);
+  const skipSetupRef = useRef(false);
+  const lumaRef = useRef<{ canvas: HTMLCanvasElement | null; value: number | null; frame: number }>({
+    canvas: null,
+    value: null,
+    frame: 0,
+  });
+  const spokenHintRef = useRef<{ hint: HintId | null; count: number | null; at: number }>({
+    hint: null,
+    count: null,
+    at: 0,
+  });
+  const [lineup, setLineup] = useState<LineupUi>({ hint: "no-body", count: null, checks: [] });
+  const setupSpec: SetupSpec = { ...DEFAULT_SETUP, ...config.setup };
   const [error, setError] = useState<string | null>(null);
   const [ui, setUi] = useState<UiState>(() => initialUi(config));
   const [voiceOn, setVoiceOn] = useState(true);
@@ -269,8 +315,7 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
         return;
       }
 
-      startedAtRef.current = Date.now();
-      setStatus("calibrating");
+      setStatus("lining-up");
       loop();
     }
 
@@ -307,6 +352,69 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
       }
 
       const aspect = video.videoWidth / video.videoHeight;
+
+      // ---- line-up: nothing is counted until the user is readable ----------
+      if (statusRef.current === "lining-up") {
+        const lr = lumaRef.current;
+        if (lr.frame++ % 15 === 0) {
+          lr.canvas ??= document.createElement("canvas");
+          lr.canvas.width = 24;
+          lr.canvas.height = 24;
+          const c = lr.canvas.getContext("2d", { willReadFrequently: true });
+          if (c) {
+            c.drawImage(video, 0, 0, 24, 24);
+            const d = c.getImageData(0, 0, 24, 24).data;
+            let sum = 0;
+            for (let i = 0; i < d.length; i += 4) {
+              sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+            }
+            lr.value = sum / (24 * 24) / 255;
+          }
+        }
+        const assessment = assessSetup(landmarks, { luma: lr.value }, aspect, setupSpec);
+        const step = stepGate(gateRef.current, assessment, now);
+        gateRef.current = step.state;
+
+        const sig = `${step.hint}|${step.count}|${assessment.checks.map((c) => (c.ok ? 1 : 0)).join("")}`;
+        if (sig !== lastLineupSigRef.current) {
+          lastLineupSigRef.current = sig;
+          setLineup({ hint: step.hint, count: step.count, checks: assessment.checks });
+        }
+
+        if (voiceOnRef.current) {
+          const sp = spokenHintRef.current;
+          if (step.count !== null && step.count !== sp.count) {
+            tone(520, 90);
+            speak(String(step.count), { interrupt: true });
+            sp.count = step.count;
+            sp.at = performance.now();
+          } else if (
+            step.count === null &&
+            step.hint !== sp.hint &&
+            step.hint !== "ready" &&
+            performance.now() - sp.at > 2500
+          ) {
+            speak(HINT_COPY[step.hint], { interrupt: true });
+            sp.hint = step.hint;
+            sp.count = null;
+            sp.at = performance.now();
+          }
+        }
+
+        const side = lastReadingRef.current.side;
+        const canvasEl = canvasRef.current;
+        if (canvasEl) drawFrame(canvasEl, video, landmarks, side, "seek");
+
+        if (step.go || skipSetupRef.current) {
+          if (voiceOnRef.current) {
+            tone(880, 160);
+            speak("Go", { interrupt: true });
+          }
+          startedAtRef.current = Date.now();
+          setStatus("calibrating");
+        }
+        return;
+      }
 
       // Calibrate resting hip/ankle height and torso length before judging
       // position, same pattern as PoseCoach's hip-rise calibration.
@@ -494,15 +602,35 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
       side: "left" | "right" | null,
       cue: HoldCue | RepCue,
     ) {
-      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+      // Size the canvas to the box it is shown in and map landmarks with the
+      // same maths as `object-fit: cover` on the video. Drawing at the video's
+      // native size and letting CSS stretch it misaligns the skeleton whenever
+      // the box and the video have different aspect ratios (they always do).
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const bw = Math.max(1, Math.round(canvas.clientWidth * dpr));
+      const bh = Math.max(1, Math.round(canvas.clientHeight * dpr));
+      if (canvas.width !== bw || canvas.height !== bh) {
+        canvas.width = bw;
+        canvas.height = bh;
       }
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(0, 0, bw, bh);
       if (!landmarks || landmarks.length === 0) return;
-      renderSkeleton(ctx, canvas, landmarks, side, cue);
+      const scale = Math.max(bw / video.videoWidth, bh / video.videoHeight);
+      const ox = (bw - video.videoWidth * scale) / 2;
+      const oy = (bh - video.videoHeight * scale) / 2;
+      renderSkeleton(
+        ctx,
+        (p) => ({
+          x: p.x * video.videoWidth * scale + ox,
+          y: p.y * video.videoHeight * scale + oy,
+        }),
+        dpr,
+        landmarks,
+        side,
+        cue,
+      );
     }
 
     start();
@@ -539,7 +667,7 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
     else router.push("/progress");
   }, [router, onFinish, config.slug, config.name]);
 
-  const busy = status !== "tracking" && status !== "calibrating";
+  const busy = status !== "tracking" && status !== "calibrating" && status !== "lining-up";
   const progressPct = isReps
     ? Math.min(100, (ui.reps / Math.max(1, ui.targetReps)) * 100)
     : ui.targetSec > 0
@@ -559,22 +687,20 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
         : "bg-white/60 text-ink/70";
 
   return (
-    <div className="space-y-4 px-5 pt-6">
-      <div className={reference ? "grid grid-cols-2 gap-2" : undefined}>
-        {reference && (
-          <ReferenceLoop clip={reference} className="aspect-[3/4] w-full" />
-        )}
-      <div
-        className={`relative w-full overflow-hidden rounded-2xl bg-ink ${
-          reference ? "aspect-[3/4]" : "aspect-[4/3]"
-        }`}
-      >
+    <div className="space-y-4 pt-2">
+      <div className="relative mx-auto w-full overflow-hidden bg-night sm:rounded-3xl" style={{ height: "min(68dvh, 640px)" }}>
         <video ref={videoRef} muted playsInline className="h-full w-full -scale-x-100 object-cover" />
         <canvas ref={canvasRef} className="absolute inset-0 h-full w-full -scale-x-100" />
 
+        {reference && (
+          <div className="absolute top-3 right-3 w-24 overflow-hidden rounded-2xl border-2 border-white/80 shadow-lg">
+            <ReferenceLoop clip={reference} compact className="aspect-[3/4] w-full" />
+          </div>
+        )}
+
         {busy && (
-          <div className="absolute inset-0 flex items-center justify-center bg-ink/70 px-6 text-center">
-            <p className="font-sans text-sm text-paper">
+          <div className="absolute inset-0 flex items-center justify-center bg-night/70 px-6 text-center">
+            <p className="font-sans text-sm text-white">
               {status === "idle" && "Starting camera…"}
               {status === "requesting" && "Requesting camera permission…"}
               {status === "loading-model" && "Loading pose model…"}
@@ -583,17 +709,60 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
           </div>
         )}
 
+        {status === "lining-up" && (
+          <>
+            {lineup.count !== null && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <span className="font-display text-[9rem] leading-none text-white drop-shadow-lg">
+                  {lineup.count}
+                </span>
+              </div>
+            )}
+            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-night/90 to-transparent px-5 pt-10 pb-4">
+              <p
+                aria-live="polite"
+                className={`text-center font-display text-2xl ${
+                  lineup.hint === "ready" ? "text-mint" : "text-white"
+                }`}
+              >
+                {lineup.count !== null ? "Perfect, starting in…" : HINT_COPY[lineup.hint]}
+              </p>
+              <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+                {lineup.checks.map((c) => (
+                  <span
+                    key={c.id}
+                    className={`rounded-full px-2.5 py-1 font-sans text-[11px] font-semibold ${
+                      c.ok ? "bg-success-soft text-success" : "bg-amber-soft text-amber"
+                    }`}
+                  >
+                    {c.ok ? "✓ " : ""}
+                    {c.label}
+                  </span>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  skipSetupRef.current = true;
+                }}
+                className="mx-auto mt-3 block min-h-11 px-3 font-sans text-xs text-white/70 underline"
+              >
+                Skip set-up
+              </button>
+            </div>
+          </>
+        )}
+
         {status === "calibrating" && (
-          <div className="absolute inset-x-0 top-2 flex justify-center">
-            <span className="rounded-full bg-ink/70 px-3 py-1 font-sans text-[11px] text-paper/90">
+          <div className="absolute inset-x-0 top-3 flex justify-center">
+            <span className="rounded-full bg-night/70 px-3 py-1 font-sans text-[11px] text-white/90">
               Hold still — finding your resting position
             </span>
           </div>
         )}
-
-      </div>
       </div>
 
+      <div className="space-y-4 px-5">
       <div className="flex items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-moss" />
@@ -708,24 +877,22 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
           {finishLabel ?? "End session & save"}
         </button>
       </div>
+      </div>
     </div>
   );
 }
 
 function renderSkeleton(
   ctx: CanvasRenderingContext2D,
-  canvas: HTMLCanvasElement,
+  toXY: (p: NormalizedLandmark) => { x: number; y: number },
+  dpr: number,
   landmarks: NormalizedLandmark[],
   side: "left" | "right" | null,
   cue: HoldCue | RepCue,
 ) {
-  const w = canvas.width;
-  const h = canvas.height;
-  const toXY = (p: NormalizedLandmark) => ({ x: p.x * w, y: p.y * h });
-
-  const neutral = "#F5F3EDaa";
+  const neutral = "#FFFFFFcc";
   const activeColor =
-    cue === "banked" ? "#4B7A63" : cue === "nearly" ? "#D98A3A" : cue === "released-early" ? "#BE4B3C" : "#1C332B";
+    cue === "banked" || cue === "holding" ? "#34B58A" : cue === "nearly" ? "#F2A93B" : cue === "released-early" ? "#E2604F" : "#34B58A";
 
   const indices =
     side === "left"
@@ -741,7 +908,7 @@ function renderSkeleton(
     [27, 29], [29, 31], [28, 30], [30, 32],
   ];
 
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 3 * dpr;
   ctx.lineCap = "round";
   for (const [a, b] of connections) {
     const p1 = landmarks[a];
@@ -765,7 +932,7 @@ function renderSkeleton(
     const isActive = indices !== null && (i === indices.hip || i === indices.knee || i === indices.ankle);
     ctx.fillStyle = isActive ? activeColor : neutral;
     ctx.beginPath();
-    ctx.arc(x, y, isActive ? 6 : 5, 0, Math.PI * 2);
+    ctx.arc(x, y, (isActive ? 6 : 5) * dpr, 0, Math.PI * 2);
     ctx.fill();
   });
 }
