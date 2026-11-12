@@ -98,7 +98,7 @@ export const coachedExercises: Record<string, CoachedExercise> = {
   "forward-lunge": {
     calibration: "protocol",
     provenance:
-      "Front-knee bend from the guidance's description. Stance separation reuses the 0.13 torso-lengths measured off the filmed calf stretch, which is the same stepped-stance geometry.",
+      "Front-knee bend from the guidance's description. Stance separation is carried over from the filmed calf stretch, the same stepped-stance geometry, and is the one number here with no lunge footage behind it.",
     config: {
       slug: "forward-lunge",
       name: "Forward Lunge",
@@ -106,10 +106,16 @@ export const coachedExercises: Record<string, CoachedExercise> = {
       // Both knees bend in a lunge, so there is no "straight back leg" to
       // require — backKneeMin is left at zero and the rep is defined by the
       // front knee bending inside a stepped stance.
+      //
+      // minSeparation is in torso lengths. It read 0.13 when the signal
+      // measured the frame rather than the body, which at the calf clip's
+      // framing (torso 0.175) is 0.70 torso lengths — so the value changes
+      // but the stance it asks for does not. Unverified either way until
+      // there is lunge footage: no clip of this movement has been measured.
       signal: {
         kind: "splitStance",
         backKneeMin: 0,
-        minSeparation: 0.13,
+        minSeparation: 0.7,
         frontKneeMax: 120,
       },
       targetReps: 10,

@@ -39,9 +39,12 @@ function prefersReducedMotion(): boolean {
 export function ReferenceLoop({
   clip,
   className = "",
+  compact = false,
 }: {
   clip: ReferenceClip;
   className?: string;
+  /** Small thumbnail: no caption or label, so it never crowds the camera. */
+  compact?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -82,9 +85,11 @@ export function ReferenceLoop({
         className="h-full w-full object-cover"
       />
 
-      <span className="absolute top-2 left-2 rounded-full bg-ink/70 px-2 py-0.5 font-sans text-[10px] font-semibold tracking-wide text-paper/90 uppercase">
-        Do it like this
-      </span>
+      {!compact && (
+        <span className="absolute top-2 left-2 rounded-full bg-ink/70 px-2 py-0.5 font-sans text-[10px] font-semibold tracking-wide text-paper/90 uppercase">
+          Do it like this
+        </span>
+      )}
 
       <button
         type="button"
@@ -106,7 +111,7 @@ export function ReferenceLoop({
         )}
       </button>
 
-      {clip.watchFor && (
+      {clip.watchFor && !compact && (
         <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/90 to-transparent px-2.5 pt-6 pb-2 font-sans text-[10px] leading-snug text-paper/90">
           {clip.watchFor}
         </p>

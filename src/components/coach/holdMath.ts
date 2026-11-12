@@ -1,5 +1,5 @@
 import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
-import { LANDMARK, jointAngle, type Point, type Side } from "@/components/coach/poseMath";
+import { LANDMARK, analyseFrame, jointAngle, type Point, type Side } from "@/components/coach/poseMath";
 
 /**
  * Generic pure logic for "get into position and hold" exercises (stretches),
@@ -261,6 +261,14 @@ export type HoldSignal =
   | {
       kind: "splitStance";
       backKneeMin: number;
+      /**
+       * How far apart the feet must be, as a fraction of torso length.
+       *
+       * Body-relative, not frame-relative: a stance measured as a fraction of
+       * the frame shrinks as the user steps back from the camera, so a
+       * frame-relative threshold silently encodes the distance it was filmed
+       * at and rejects the same correct stretch performed further away.
+       */
       minSeparation: number;
       /** Lunges also need the FRONT knee bent, not just the back leg straight. */
       frontKneeMax?: number;
@@ -293,7 +301,14 @@ export type HoldSignal =
    * side it rises to between -0.48 and -0.39, so a ceiling around -0.52
    * separates the two with margin at both ends.
    */
-  | { kind: "kneeRoll"; maxKneeHeight: number };
+  | { kind: "kneeRoll"; maxKneeHeight: number }
+  /**
+   * The heel slide: lying side-on, heel drawn toward the bottom while the
+   * lower back stays flat. Scored by poseMath's depth and pelvis checks (the
+   * original reference implementation), against the resting hip height
+   * captured during calibration. In position means both checks are good.
+   */
+  | { kind: "heelSlide" };
 
 /**
  * How far outside a target a reading can drift before quality reads zero.
@@ -358,6 +373,12 @@ export interface SignalReading {
   side: Side | null;
   kneeAngle: number | null;
   hipAngle: number | null;
+  /**
+   * What to change, in words, when the reading is short of the target. Shown
+   * live while the user is getting into position. Absent when nothing needs
+   * correcting.
+   */
+  hint?: string;
 }
 
 function visible(p: NormalizedLandmark | undefined): p is NormalizedLandmark {
@@ -418,7 +439,24 @@ export function evaluateSignal(
   signal: HoldSignal,
   baselines: { left: number | null; right: number | null },
   torsoLength: number | null,
+  hipBaselines: { left: number | null; right: number | null } = { left: null, right: null },
 ): SignalReading | null {
+  if (signal.kind === "heelSlide") {
+    const preliminary = analyseFrame(landmarks, aspect, null);
+    if (!preliminary) return null;
+    const hipBaseline = hipBaselines[preliminary.side];
+    const frame = hipBaseline === null ? preliminary : analyseFrame(landmarks, aspect, hipBaseline);
+    if (!frame) return null;
+    return {
+      inPosition: frame.inGoodZone,
+      quality: frame.matchPct,
+      side: frame.side,
+      kneeAngle: frame.kneeAngleDeg,
+      hipAngle: null,
+      hint: frame.inGoodZone ? undefined : frame.caption,
+    };
+  }
+
   const legs = [legAngles(landmarks, "left", aspect), legAngles(landmarks, "right", aspect)].filter(
     (l): l is LegAngles => l !== null,
   );
@@ -439,6 +477,7 @@ export function evaluateSignal(
       side: chosen.side,
       kneeAngle: chosen.knee,
       hipAngle: chosen.hip,
+      hint: matching ? undefined : jointBandHint(chosen, signal.knee, signal.hip),
     };
   }
 
@@ -448,6 +487,7 @@ export function evaluateSignal(
     if (!lifted) return null;
     const leg = legs.find((l) => l.side === lifted.side);
     return {
+      hint: lifted.lift >= signal.minLift ? undefined : "Draw your knee a little closer to your chest.",
       inPosition: lifted.lift >= signal.minLift,
       quality: atLeastScore(lifted.lift, signal.minLift, RATIO_TOLERANCE),
       side: lifted.side,
@@ -477,6 +517,7 @@ export function evaluateSignal(
     const height = (kneeY - hipY) / torsoLength;
     const leg = legs[0] ?? null;
     return {
+      hint: height >= signal.maxKneeHeight ? undefined : "Let both knees roll a little further to one side.",
       inPosition: height >= signal.maxKneeHeight,
       quality: atLeastScore(height, signal.maxKneeHeight, RATIO_TOLERANCE),
       side: leg?.side ?? null,
@@ -499,6 +540,7 @@ export function evaluateSignal(
     const standingSide: Side = liftedSide === "left" ? "right" : "left";
     const standing = legs.find((l) => l.side === standingSide);
     return {
+      hint: Math.abs(gap) >= signal.minAnkleGap ? undefined : "Lift one foot clearly off the floor.",
       inPosition: Math.abs(gap) >= signal.minAnkleGap,
       quality: atLeastScore(Math.abs(gap), signal.minAnkleGap, RATIO_TOLERANCE),
       side: standingSide,
@@ -527,6 +569,7 @@ export function evaluateSignal(
       ? legs.reduce((a, b) => (a.ankle.y <= b.ankle.y ? a : b))
       : null;
     return {
+      hint: separation >= signal.minAngle ? undefined : "Lift the top leg a little higher.",
       inPosition: separation >= signal.minAngle,
       quality: atLeastScore(separation, signal.minAngle, ANGLE_TOLERANCE),
       side: top?.side ?? null,
@@ -544,8 +587,15 @@ export function evaluateSignal(
   const leftAnkle = landmarks[LANDMARK.leftAnkle];
   const rightAnkle = landmarks[LANDMARK.rightAnkle];
   if (!visible(leftAnkle) || !visible(rightAnkle) || legs.length === 0) return null;
+  if (torsoLength === null) return null;
 
-  const separation = Math.abs(leftAnkle.x - rightAnkle.x) * aspect;
+  // Divided by torso length, like every other ratio signal here. Measured in
+  // the frame alone this was the one threshold that moved with the user's
+  // distance from the camera: a held calf stretch filmed head-to-toe reads
+  // 0.12-0.16 of the frame, but the same stretch two steps further back reads
+  // under 0.10 and was rejected outright. That is the "sometimes works"
+  // failure — the stretch was right and the yardstick was wrong.
+  const separation = (Math.abs(leftAnkle.x - rightAnkle.x) * aspect) / torsoLength;
   // The back leg is the straighter one. If only the front leg is readable its
   // knee is bent, so this reads as out of position — a false negative rather
   // than a false pass, which is the safe way round to be wrong.
@@ -564,7 +614,16 @@ export function evaluateSignal(
       ? 100
       : bandScore(front.knee, { max: signal.frontKneeMax }, ANGLE_TOLERANCE),
   );
+  const hint =
+    separation < signal.minSeparation
+      ? "Step your back foot further behind you."
+      : back.knee < signal.backKneeMin
+        ? "Straighten your back leg and keep the heel down."
+        : !frontOk
+          ? "Bend your front knee a little more."
+          : undefined;
   return {
+    hint,
     inPosition:
       separation >= signal.minSeparation &&
       back.knee >= signal.backKneeMin &&
@@ -574,6 +633,15 @@ export function evaluateSignal(
     kneeAngle: back.knee,
     hipAngle: back.hip,
   };
+}
+
+function jointBandHint(leg: LegAngles, knee?: AngleBand, hip?: AngleBand): string | undefined {
+  if (knee?.max !== undefined && leg.knee > knee.max) return "Bend your knee further.";
+  if (knee?.min !== undefined && leg.knee < knee.min) return "Straighten your knee a little more.";
+  if (hip?.max !== undefined && leg.hip > hip.max) return "Bring your knees closer to your chest.";
+  if (hip?.min !== undefined && leg.hip < hip.min) return "Keep your thigh in line with your body, knee pointing down.";
+  if (hip?.max !== undefined || hip?.min !== undefined) return "Adjust how far your thigh is from your body.";
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------

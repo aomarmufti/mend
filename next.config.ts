@@ -5,7 +5,8 @@ const nextConfig: NextConfig = {
     return [
       // Library and Coach tabs were merged into Plan.
       { source: "/library", destination: "/plan", permanent: false },
-      { source: "/library/:slug", destination: "/plan/:slug", permanent: false },
+      { source: "/library/:slug", destination: "/exercise/:slug", permanent: false },
+      { source: "/plan/:slug", destination: "/exercise/:slug", permanent: false },
       // Coach is a full-screen mode entered from an exercise; bare /coach has
       // nothing to coach.
       {
