@@ -67,6 +67,7 @@ const NO_BODY_HELP_MS = 5_000;
  */
 const GPU_EMPTY_FRAMES = 45;
 const GPU_ERROR_FRAMES = 8;
+const CPU_ERROR_FRAMES = 30;
 /**
  * Frames go to the model through a 2D canvas, not the <video> element.
  * Uploading a camera-backed <video> straight into WebGL yields blank frames
@@ -195,6 +196,12 @@ async function createLandmarker(
     baseOptions: { modelAssetPath: MODEL_URL, delegate },
     runningMode: "VIDEO" as const,
     numPoses: 1,
+    // MediaPipe needs a WebGL context even on the CPU delegate (it uploads
+    // each frame as a texture). Left to itself, on Safari 17+ it makes one on
+    // an OffscreenCanvas, which fails on some Macs: the GPU model won't load
+    // ("kGpuService") and the CPU one throws on every frame ("GLctx"). A
+    // fresh, ordinary canvas works everywhere we've seen.
+    canvas: document.createElement("canvas"),
   });
   if (prefer === "GPU") {
     try {
@@ -491,6 +498,14 @@ export function HoldCoach({
           errorRunRef.current += 1;
           if (errorRunRef.current === 1) console.warn("[coach] pose detection failed on a frame", err);
           if (errorRunRef.current >= GPU_ERROR_FRAMES) void fallBackToCpu("pose detection keeps failing on the GPU");
+          // Failing on the CPU too: this browser can't run the model. Say so,
+          // rather than asking someone in plain view to step into it.
+          if (delegateRef.current === "CPU" && errorRunRef.current >= CPU_ERROR_FRAMES && statusRef.current === "lineup") {
+            console.error("[coach] pose detection fails on the CPU too", err);
+            setError("The camera coach can't run in this browser. Try Chrome, or do this one with the timer.");
+            setStatus("error");
+            return;
+          }
         }
         if (delegateRef.current === "GPU" && hitsRef.current === 0 && framesRef.current >= GPU_EMPTY_FRAMES) {
           void fallBackToCpu(`GPU pose model found no one in ${framesRef.current} frames`);

@@ -130,14 +130,25 @@ export function CameraCheck() {
       const results: Run[] = [];
       let lastPose: { x: number; y: number }[] | null = null;
 
-      for (const [delegate, source] of [
-        ["GPU", "video"],
-        ["GPU", "canvas"],
-        ["CPU", "video"],
-        ["CPU", "canvas"],
-      ] as [Delegate, Source][]) {
+      // "page" binds the model's WebGL context to an ordinary canvas, as the
+      // coach does; "default" leaves MediaPipe to choose (an OffscreenCanvas
+      // on Safari 17+), kept for comparison.
+      for (const [delegate, source, gl] of [
+        ["GPU", "canvas", "default"],
+        ["GPU", "video", "page"],
+        ["GPU", "canvas", "page"],
+        ["CPU", "video", "page"],
+        ["CPU", "canvas", "page"],
+      ] as [Delegate, Source, "page" | "default"][]) {
         if (cancelled) return;
-        const run: Run = { label: `${delegate} + ${source}`, frames: 0, found: 0, errors: 0, firstError: null, loadError: null };
+        const run: Run = {
+          label: `${delegate} + ${source}${gl === "default" ? " (MediaPipe default context)" : ""}`,
+          frames: 0,
+          found: 0,
+          errors: 0,
+          firstError: null,
+          loadError: null,
+        };
         setStatus(`Testing ${run.label}… stand where the whole of you is visible`);
         let lm: PoseLandmarkerType | null = null;
         try {
@@ -145,6 +156,7 @@ export function CameraCheck() {
             baseOptions: { modelAssetPath: MODEL_URL, delegate },
             runningMode: "VIDEO",
             numPoses: 1,
+            ...(gl === "page" ? { canvas: document.createElement("canvas") } : {}),
           });
         } catch (err) {
           run.loadError = short(err);
