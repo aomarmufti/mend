@@ -26,22 +26,27 @@ import {
   type HoldSignal,
   type ReadabilityTracker,
 } from "@/components/coach/holdMath";
-import { ReferenceLoop, type ReferenceClip } from "@/components/coach/ReferenceLoop";
-import { logExercise } from "@/lib/exerciseLog";
-import { readActiveConditionSlug } from "@/lib/activeCondition";
-import { markCompletedToday } from "@/lib/localSession";
-import { VOICE, speak, stopSpeaking, tone } from "@/components/coach/coachVoice";
 import {
+  assessSetup,
+  stepGate,
+  initialGate,
+  meanLuminance,
   DEFAULT_SETUP,
   HINT_COPY,
-  assessSetup,
-  initialGate,
-  stepGate,
   type GateState,
   type HintId,
   type SetupCheck,
   type SetupSpec,
 } from "@/components/coach/setupCheck";
+
+export type Framing = "side" | "front";
+export type Posture = "standing" | "lying";
+import { ReferenceLoop, type ReferenceClip } from "@/components/coach/ReferenceLoop";
+import { logExercise, type SetDetail } from "@/lib/exerciseLog";
+import { readActiveConditionSlug } from "@/lib/activeCondition";
+import { markCompletedToday } from "@/lib/localSession";
+import { VOICE, stopSpeaking, tone } from "@/components/coach/coachVoice";
+import { Pill, Ring, btnPrimary } from "@/components/ui/kit";
 
 // Self-hosted so the coach works on a weak connection or none at all, and
 // so starting a health activity does not hand a third-party CDN the user's IP.
@@ -50,6 +55,9 @@ const MODEL_URL = "/mediapipe/models/pose_landmarker_lite.task";
 
 const CALIBRATION_FRAMES = 30;
 const UI_INTERVAL_MS = 100;
+/** How long the line-up checks must all pass before coaching starts. */
+/** After this long, offer to start without a perfect line-up. */
+const LINEUP_ESCAPE_MS = 8_000;
 
 export type { HoldSignal };
 
@@ -68,8 +76,6 @@ export interface HoldExerciseConfig {
   rep?: Partial<RepConfig>;
   /** Shown once, before calibration — how to position the camera. */
   setupHint: string;
-  /** Line-up expectations (which way round, how big in frame). */
-  setup?: Partial<SetupSpec>;
 }
 
 interface Baselines {
@@ -102,67 +108,58 @@ function torsoLengthOf(landmarks: NormalizedLandmark[], aspect: number): number 
   return length > 0 ? length : null;
 }
 
-const REP_CUE_COPY: Record<RepCue, (remaining: number) => string> = {
-  ready: () => "Ready when you are.",
-  descending: () => "Good — keep going.",
-  holding: () => "That's the depth. Now come back up.",
-  counted: (remaining) =>
-    remaining > 0 ? "Counted. Next one when you're ready." : "That's the set — nice work.",
-  tooFast: () => "Not quite far enough — go a little deeper.",
+const REP_CUE_COPY: Record<RepCue, (remaining: number) => string | null> = {
+  ready: () => null,
+  descending: () => "Good, keep going.",
+  holding: () => "That's the depth. Now come back.",
+  counted: (remaining) => (remaining > 0 ? "Counted. Next one when you're ready." : "That's the set, nice work."),
+  tooFast: () => "Not quite far enough. Go a little further.",
 };
 
 interface CueContext {
   targetSec: number;
   remaining: number;
-  /** Seconds actually held on the set that just banked. */
   lastSetSec: number;
 }
 
-const CUE_COPY: Record<HoldCue, (c: CueContext) => string> = {
-  seek: () => "Get into position to begin.",
-  holding: () => "Hold…",
-  nearly: () => "Nearly there — hold it.",
+const CUE_COPY: Record<HoldCue, (c: CueContext) => string | null> = {
+  seek: () => null,
+  holding: () => null,
+  nearly: () => "Nearly there, hold it.",
   banked: ({ targetSec, remaining }) =>
     remaining > 0
-      ? `Good job — full ${targetSec} seconds. Release, then set up the next one.`
-      : `Good job — full ${targetSec} seconds. That's the set done.`,
-  // Counted, and honest about what was counted. Saying "well done" for nine
-  // seconds of fifteen would be the same dishonesty as a fabricated streak,
-  // just smaller.
+      ? `Good job, full ${targetSec} seconds. Release, then set up the next one.`
+      : `Good job, full ${targetSec} seconds. That's the set done.`,
+  // Counted, and honest about what was counted.
   "banked-partial": ({ lastSetSec, targetSec, remaining }) =>
     remaining > 0
-      ? `Counted — you held ${lastSetSec}s of ${targetSec}s, so that's a partial set. Next one when you're ready.`
-      : `Counted — ${lastSetSec}s of ${targetSec}s, a partial set. That's the last one.`,
+      ? `Counted: ${lastSetSec}s of ${targetSec}s, a partial set. Next one when you're ready.`
+      : `Counted: ${lastSetSec}s of ${targetSec}s, a partial set. That's the last one.`,
   "released-early": ({ targetSec }) =>
-    `That was too short to count — aim for at least a few seconds, ideally the full ${targetSec}.`,
+    `Too short to count. Aim for at least a few seconds, ideally the full ${targetSec}.`,
 };
 
 interface UiState {
   cue: HoldCue | RepCue;
+  inPosition: boolean;
   elapsedSec: number;
-  targetSec: number;
   reps: number;
-  targetReps: number;
-  kneeAngleDeg: number | null;
-  /** Live 0-100 match against the target position. */
-  form: number | null;
-  /** Sets banked short of the target, of `reps`. */
   partials: number;
+  /** Correction while out of position, or the coaching line while in it. */
   message: string;
+  tone: "good" | "warn" | "bad" | "neutral";
+  /** Line-up: what to do next, the 3-2-1 count, and the four checks. */
+  hint: HintId;
+  count: number | null;
+  checks: SetupCheck[];
+  lineupMs: number;
 }
 
-function initialUi(cfg: HoldExerciseConfig): UiState {
-  return {
-    cue: "seek",
-    elapsedSec: 0,
-    targetSec: Math.round((cfg.hold?.minHoldMs ?? DEFAULT_HOLD_CONFIG.minHoldMs) / 1000),
-    reps: 0,
-    targetReps: cfg.targetReps,
-    kneeAngleDeg: null,
-    form: null,
-    partials: 0,
-    message: cfg.setupHint,
-  };
+export interface CoachResult {
+  reps: number;
+  partials: number;
+  sets: SetDetail[];
+  durationMs: number;
 }
 
 async function createLandmarker(
@@ -183,28 +180,50 @@ async function createLandmarker(
 
 export interface HoldCoachProps {
   config: HoldExerciseConfig;
-  /** Looping footage of the movement, shown beside the live feed. */
-  reference?: ReferenceClip;
-  onFinish?: (result: { reps: number }) => void;
-  finishLabel?: string;
+  /** Looping footage of the movement, shown in a corner while coaching. */
+  reference?: ReferenceClip | null;
+  framing?: Framing;
+  posture?: Posture;
+  /** The exercise's coaching cues; the first is shown while in position. */
+  cues?: string[];
+  /** Called with the result after it is logged. Without it, navigates to `exitHref`. */
+  onFinish?: (result: CoachResult) => void;
+  /** Leave without saving. */
+  onExit?: () => void;
+  exitHref?: string;
+  /** Session progress, e.g. "2 of 3", shown in the header. */
+  sessionLabel?: string;
 }
 
 type Status =
   | "idle"
   | "requesting"
   | "loading-model"
-  | "lining-up"
+  | "lineup"
   | "calibrating"
   | "tracking"
+  | "done"
   | "error";
 
-interface LineupUi {
-  hint: HintId;
-  count: number | null;
-  checks: SetupCheck[];
-}
-
-export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoachProps) {
+/**
+ * Full-screen camera coach: line up, then coach, then a summary.
+ *
+ * Screens 7 and 8 of the app flow. The tracking engine is the same one that
+ * was already calibrated against footage (holdMath); this component adds the
+ * line-up gate in front of it, scores form per rep rather than as a live
+ * number, and owns the full-screen layout.
+ */
+export function HoldCoach({
+  config,
+  reference,
+  framing = "side",
+  posture = "standing",
+  cues = [],
+  onFinish,
+  onExit,
+  exitHref = "/plan",
+  sessionLabel,
+}: HoldCoachProps) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -212,6 +231,7 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
   const rafRef = useRef<number | null>(null);
   const lastVideoTimeRef = useRef(-1);
   const lastLandmarksRef = useRef<NormalizedLandmark[] | null>(null);
+  const statusRef = useRef<Status>("idle");
 
   const baselineRef = useRef<Baselines>(emptyBaselines);
   const calibFramesRef = useRef(0);
@@ -220,57 +240,61 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
   const holdTrackerRef = useRef<HoldTracker>(initialHoldTracker);
   const repTrackerRef = useRef<RepTrackerState>(initialRepTrackerState);
   const readabilityRef = useRef<ReadabilityTracker>(initialReadability);
-  const lastReadingRef = useRef<{ side: "left" | "right" | null; kneeAngle: number | null }>({
-    side: null,
-    kneeAngle: null,
-  });
+  const lastSideRef = useRef<"left" | "right" | null>(null);
   const repsRef = useRef(0);
   const partialsRef = useRef(0);
   const lastSetMsRef = useRef(0);
-  // Exponential moving average: the raw per-frame score jitters with the
-  // landmarks, and a percentage that flickers ten points a frame reads as
-  // broken rather than precise.
-  const formRef = useRef<number | null>(null);
-  const formSumRef = useRef(0);
-  const formCountRef = useRef(0);
+  const setsRef = useRef<SetDetail[]>([]);
+  // Form is scored per rep: the mean match over the frames of one attempt,
+  // reported once the attempt banks. A number that moves while you move is
+  // noise to someone mid-stretch; a number per rep is feedback.
+  const attemptRef = useRef({ sum: 0, n: 0 });
   const lastUiRef = useRef(0);
-  const lastLineupSigRef = useRef("");
   const startedAtRef = useRef(0);
-  const activeSideRef = useRef<"left" | "right" | null>(null);
-  // Audio fires on transitions only. Without these the cue would be re-spoken
-  // every frame it stayed true, which is ~60 times a second.
+  const lumaRef = useRef<{ value: number | null; at: number }>({ value: null, at: 0 });
+  const lumaCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lineupStartRef = useRef(0);
+  const gateRef = useRef<GateState>(initialGate);
+  const forceStartRef = useRef(false);
   const spokenCueRef = useRef<HoldCue | RepCue | null>(null);
   const spokenCountRef = useRef<number | null>(null);
   const spokenUnreadableRef = useRef(false);
+  const spokenLineupRef = useRef<{ text: string; at: number; count: number | null }>({ text: "", at: 0, count: null });
   const voiceOnRef = useRef(true);
 
   const holdConfig: HoldConfig = { ...DEFAULT_HOLD_CONFIG, ...config.hold };
   const repConfig: RepConfig = { ...DEFAULT_REP_CONFIG, ...config.rep };
   const isReps = config.mode === "reps";
+  const targetSec = Math.round(holdConfig.minHoldMs / 1000);
+  const holdCue = cues[0] ?? "Hold the position.";
+  // Posture is judged along the body's longer axis by assessSetup, so lying
+  // and standing share one spec; only the orientation differs per exercise.
+  const setupSpec: SetupSpec = { ...DEFAULT_SETUP, orientation: framing };
+  void posture;
 
   const [status, setStatusState] = useState<Status>("idle");
-  const statusRef = useRef<Status>("idle");
-  const setStatus = useCallback((next: Status) => {
-    statusRef.current = next;
-    setStatusState(next);
-  }, []);
-  const gateRef = useRef<GateState>(initialGate);
-  const skipSetupRef = useRef(false);
-  const lumaRef = useRef<{ canvas: HTMLCanvasElement | null; value: number | null; frame: number }>({
-    canvas: null,
-    value: null,
-    frame: 0,
-  });
-  const spokenHintRef = useRef<{ hint: HintId | null; count: number | null; at: number }>({
-    hint: null,
-    count: null,
-    at: 0,
-  });
-  const [lineup, setLineup] = useState<LineupUi>({ hint: "no-body", count: null, checks: [] });
-  const setupSpec: SetupSpec = { ...DEFAULT_SETUP, ...config.setup };
   const [error, setError] = useState<string | null>(null);
-  const [ui, setUi] = useState<UiState>(() => initialUi(config));
+  const [ui, setUi] = useState<UiState>({
+    cue: "seek",
+    inPosition: false,
+    elapsedSec: 0,
+    reps: 0,
+    partials: 0,
+    message: config.setupHint,
+    tone: "neutral",
+    hint: "no-body",
+    count: null,
+    checks: [],
+    lineupMs: 0,
+  });
+  const [sets, setSets] = useState<SetDetail[]>([]);
   const [voiceOn, setVoiceOn] = useState(true);
+  const [showRef, setShowRef] = useState(true);
+
+  const setStatus = (s: Status) => {
+    statusRef.current = s;
+    setStatusState(s);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -280,13 +304,13 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
       setStatus("requesting");
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: 960, height: 540 },
+          video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false,
         });
       } catch (err) {
         if (cancelled) return;
         console.error(err);
-        setError("Camera permission was denied or no camera is available.");
+        setError("Camera permission was denied or no camera is available. You can still do this one with the timer.");
         setStatus("error");
         return;
       }
@@ -310,12 +334,14 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
       } catch (err) {
         if (cancelled) return;
         console.error(err);
-        setError("Couldn't load the pose model — check your internet connection.");
+        setError("Couldn't load the pose model on this device.");
         setStatus("error");
         return;
       }
 
-      setStatus("lining-up");
+      lineupStartRef.current = performance.now();
+      setStatus("lineup");
+      if (voiceOnRef.current) VOICE.lineUp("Let's get you lined up.");
       loop();
     }
 
@@ -328,12 +354,31 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
       rafRef.current = requestAnimationFrame(process);
     }
 
+    function sampleLuminance(video: HTMLVideoElement, now: number) {
+      if (now - lumaRef.current.at < 500) return;
+      lumaRef.current.at = now;
+      if (!lumaCanvasRef.current) lumaCanvasRef.current = document.createElement("canvas");
+      const c = lumaCanvasRef.current;
+      c.width = 32;
+      c.height = 18;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return;
+      try {
+        ctx.drawImage(video, 0, 0, 32, 18);
+        lumaRef.current.value = meanLuminance(ctx.getImageData(0, 0, 32, 18).data);
+      } catch {
+        lumaRef.current.value = null;
+      }
+    }
+
     function tick() {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       const landmarker = landmarkerRef.current;
       if (!video || !canvas || !landmarker) return;
       if (video.readyState < 2 || !video.videoWidth) return;
+      const phase = statusRef.current;
+      if (phase === "done" || phase === "error") return;
 
       const now = performance.now();
       let landmarks: NormalizedLandmark[] | null = null;
@@ -353,73 +398,48 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
 
       const aspect = video.videoWidth / video.videoHeight;
 
-      // ---- line-up: nothing is counted until the user is readable ----------
-      if (statusRef.current === "lining-up") {
-        const lr = lumaRef.current;
-        if (lr.frame++ % 15 === 0) {
-          lr.canvas ??= document.createElement("canvas");
-          lr.canvas.width = 24;
-          lr.canvas.height = 24;
-          const c = lr.canvas.getContext("2d", { willReadFrequently: true });
-          if (c) {
-            c.drawImage(video, 0, 0, 24, 24);
-            const d = c.getImageData(0, 0, 24, 24).data;
-            let sum = 0;
-            for (let i = 0; i < d.length; i += 4) {
-              sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
-            }
-            lr.value = sum / (24 * 24) / 255;
-          }
-        }
-        const assessment = assessSetup(landmarks, { luma: lr.value }, aspect, setupSpec);
+      // ---- line up ---------------------------------------------------------
+      if (phase === "lineup") {
+        sampleLuminance(video, now);
+        // Ready → still for a moment → 3, 2, 1 → go. Any slip resets it.
+        const assessment = assessSetup(landmarks, { luma: lumaRef.current.value }, aspect, setupSpec);
         const step = stepGate(gateRef.current, assessment, now);
         gateRef.current = step.state;
-
-        const sig = `${step.hint}|${step.count}|${assessment.checks.map((c) => (c.ok ? 1 : 0)).join("")}`;
-        if (sig !== lastLineupSigRef.current) {
-          lastLineupSigRef.current = sig;
-          setLineup({ hint: step.hint, count: step.count, checks: assessment.checks });
-        }
-
-        if (voiceOnRef.current) {
-          const sp = spokenHintRef.current;
-          if (step.count !== null && step.count !== sp.count) {
-            tone(520, 90);
-            speak(String(step.count), { interrupt: true });
-            sp.count = step.count;
-            sp.at = performance.now();
-          } else if (
-            step.count === null &&
-            step.hint !== sp.hint &&
-            step.hint !== "ready" &&
-            performance.now() - sp.at > 2500
-          ) {
-            speak(HINT_COPY[step.hint], { interrupt: true });
-            sp.hint = step.hint;
-            sp.count = null;
-            sp.at = performance.now();
-          }
-        }
-
-        const side = lastReadingRef.current.side;
-        const canvasEl = canvasRef.current;
-        if (canvasEl) drawFrame(canvasEl, video, landmarks, side, "seek");
-
-        if (step.go || skipSetupRef.current) {
-          if (voiceOnRef.current) {
-            tone(880, 160);
-            speak("Go", { interrupt: true });
-          }
-          startedAtRef.current = Date.now();
+        if (step.go || forceStartRef.current) {
           setStatus("calibrating");
+        } else if (voiceOnRef.current) {
+          const last = spokenLineupRef.current;
+          if (step.count !== null) {
+            if (step.count !== last.count) {
+              spokenLineupRef.current = { text: "", at: now, count: step.count };
+              VOICE.lineUp(String(step.count));
+            }
+          } else if (step.hint !== "ready") {
+            // A new instruction at once (after 2.5s), the same one every 6s.
+            const text = HINT_COPY[step.hint];
+            if (last.text !== text ? now - last.at > 2500 : now - last.at > 6000) {
+              spokenLineupRef.current = { text, at: now, count: null };
+              VOICE.lineUp(text);
+            }
+          }
+        }
+        drawFrame(canvas, video, landmarks, null, assessment.ready);
+        if (now - lastUiRef.current > UI_INTERVAL_MS) {
+          lastUiRef.current = now;
+          setUi((u) => ({
+            ...u,
+            hint: step.hint,
+            count: step.count,
+            checks: assessment.checks,
+            lineupMs: now - lineupStartRef.current,
+          }));
         }
         return;
       }
 
-      // Calibrate resting hip/ankle height and torso length before judging
-      // position, same pattern as PoseCoach's hip-rise calibration.
+      // ---- calibrate resting position (only from lined-up frames) ----------
       const b = baselineRef.current;
-      if (calibFramesRef.current < CALIBRATION_FRAMES && landmarks) {
+      if (phase === "calibrating" && landmarks) {
         const torso = torsoLengthOf(landmarks, aspect);
         const leftHip = landmarks[LANDMARK.leftHip];
         const rightHip = landmarks[LANDMARK.rightHip];
@@ -440,74 +460,39 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
               ankleY: { left: sums.ankleY.left / n || null, right: sums.ankleY.right / n || null },
               torsoLength: sums.torso / n,
             };
+            startedAtRef.current = Date.now();
             setStatus("tracking");
           }
         }
+        drawFrame(canvas, video, landmarks, null, true);
+        return;
       }
+      if (phase !== "tracking") return;
 
       // A frame the model cannot read is not the same as a frame where the
-      // user has let go: passing "can't see" through as "out of position"
-      // resets a legitimate hold every time a landmark flickers across its
-      // confidence threshold. resolveInPosition carries the last known state
-      // for a short grace period instead.
+      // user has let go; resolveInPosition carries the last state briefly.
       const reading = landmarks
-        ? evaluateSignal(landmarks, aspect, config.signal, b.ankleY, b.torsoLength)
+        ? evaluateSignal(landmarks, aspect, config.signal, b.ankleY, b.torsoLength, b.hipY)
         : null;
-      if (reading) {
-        // 0.82 old / 0.18 new: settles within about a second of real change
-        // while absorbing single-frame landmark jitter.
-        formRef.current =
-          formRef.current === null
-            ? reading.quality
-            : formRef.current * 0.82 + reading.quality * 0.18;
-        formSumRef.current += reading.quality;
-        formCountRef.current += 1;
-      }
       const resolved = resolveInPosition(readabilityRef.current, reading, now);
       readabilityRef.current = resolved.tracker;
       const inPosition = resolved.inPosition;
-
-      // Keep the overlay on the last leg we could read, so a flicker doesn't
-      // strobe the highlight off and back on again mid-hold.
-      if (reading) {
-        lastReadingRef.current = { side: reading.side, kneeAngle: reading.kneeAngle };
-      } else if (!resolved.inPosition) {
-        lastReadingRef.current = { side: null, kneeAngle: null };
+      if (reading && inPosition) {
+        attemptRef.current.sum += reading.quality;
+        attemptRef.current.n += 1;
       }
-      const { side: drawSide, kneeAngle: kneeAngleDeg } = lastReadingRef.current;
+      if (reading) lastSideRef.current = reading.side;
+      else if (!inPosition) lastSideRef.current = null;
 
-      activeSideRef.current = drawSide;
-
-      // Both modes read the same in-position boolean; only the banking rule
-      // differs. `result` is normalised so everything downstream — voice,
-      // drawing, the UI — stays mode-agnostic.
-      let result: {
-        cue: HoldCue | RepCue;
-        repBanked: boolean;
-        elapsedMs: number;
-        partial: boolean;
-        bankedMs: number;
-      };
+      let result: { cue: HoldCue | RepCue; repBanked: boolean; elapsedMs: number; partial: boolean; bankedMs: number };
       if (isReps) {
         const r = trackReps(repTrackerRef.current, inPosition, now, repConfig);
         repTrackerRef.current = r.tracker;
-        result = {
-          cue: r.cue,
-          repBanked: r.repBanked,
-          elapsedMs: r.inZoneMs,
-          partial: false,
-          bankedMs: 0,
-        };
+        result = { cue: r.cue, repBanked: r.repBanked, elapsedMs: r.inZoneMs, partial: false, bankedMs: 0 };
       } else {
         const h = trackHold(holdTrackerRef.current, inPosition, now, holdConfig);
         holdTrackerRef.current = h.tracker;
-        result = {
-          cue: h.cue,
-          repBanked: h.repBanked,
-          elapsedMs: h.elapsedMs,
-          partial: h.partial,
-          bankedMs: h.bankedMs,
-        };
+        result = { cue: h.cue, repBanked: h.repBanked, elapsedMs: h.elapsedMs, partial: h.partial, bankedMs: h.bankedMs };
       }
 
       // ---- spoken feedback -------------------------------------------------
@@ -526,8 +511,6 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
           }
           spokenCueRef.current = result.cue;
         }
-        // Count the hold down out loud over its final seconds. Reps have no
-        // target duration to count toward.
         if (!isReps && (result.cue === "holding" || result.cue === "nearly")) {
           const left = Math.ceil((holdConfig.minHoldMs - result.elapsedMs) / 1000);
           if (left > 0 && left <= 3 && spokenCountRef.current !== left) {
@@ -546,52 +529,64 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
       }
 
       if (result.repBanked) {
-        // Count what was actually performed. Capping at the target silently
-        // discards honest work once the user passes it, and the recorded
-        // number has to match what the person did.
         repsRef.current += 1;
         if (result.partial) partialsRef.current += 1;
         lastSetMsRef.current = result.bankedMs;
+        const a = attemptRef.current;
+        const detail: SetDetail = {
+          heldMs: isReps ? 0 : result.bankedMs,
+          form: a.n ? Math.round(a.sum / a.n) : null,
+          partial: result.partial || undefined,
+        };
+        setsRef.current = [...setsRef.current, detail];
+        setSets(setsRef.current);
+        attemptRef.current = { sum: 0, n: 0 };
+        const remaining = Math.max(0, config.targetReps - repsRef.current);
         if (voiceOnRef.current) {
-          const remaining = Math.max(0, config.targetReps - repsRef.current);
-          if (result.partial) {
-            VOICE.partialSet(
-              Math.round(result.bankedMs / 1000),
-              Math.round(holdConfig.minHoldMs / 1000),
-              remaining,
-            );
-          } else {
-            VOICE.repBanked(repsRef.current, remaining);
-          }
+          if (isReps) VOICE.repCounted(repsRef.current, remaining);
+          else if (result.partial)
+            VOICE.partialSet(Math.round(result.bankedMs / 1000), targetSec, remaining);
+          else VOICE.repBanked(repsRef.current, remaining);
         }
         spokenCountRef.current = null;
+        if (remaining === 0) {
+          // Give the final cue a moment on screen before the summary.
+          window.setTimeout(() => {
+            if (!cancelled && statusRef.current === "tracking") setStatus("done");
+          }, 1800);
+        }
+      } else if (result.elapsedMs === 0 && !inPosition) {
+        attemptRef.current = { sum: 0, n: 0 };
       }
 
-      drawFrame(canvas, video, landmarks, drawSide, result.cue);
+      drawFrame(canvas, video, landmarks, lastSideRef.current, inPosition);
 
       if (now - lastUiRef.current > UI_INTERVAL_MS) {
         lastUiRef.current = now;
         const remaining = Math.max(0, config.targetReps - repsRef.current);
-        setUi({
+        const scripted = isReps
+          ? REP_CUE_COPY[result.cue as RepCue](remaining)
+          : CUE_COPY[result.cue as HoldCue]({
+              targetSec,
+              remaining,
+              lastSetSec: Math.round(lastSetMsRef.current / 1000),
+            });
+        const unreadable = resolved.unreadable && !inPosition;
+        const message = unreadable
+          ? "Looking for you. Make sure your whole body is in frame."
+          : (scripted ?? (inPosition ? holdCue : (reading?.hint ?? "Get into position to begin.")));
+        const good = result.cue === "banked" || result.cue === "counted" || (inPosition && !scripted);
+        const bad = result.cue === "released-early" || result.cue === "tooFast" || unreadable;
+        setUi((u) => ({
+          ...u,
           cue: result.cue,
+          inPosition,
           elapsedSec: Math.floor(result.elapsedMs / 1000),
-          targetSec: Math.round(holdConfig.minHoldMs / 1000),
           reps: repsRef.current,
-          targetReps: config.targetReps,
-          kneeAngleDeg,
-          form: formRef.current === null ? null : Math.round(formRef.current),
           partials: partialsRef.current,
-          message:
-            resolved.unreadable && !resolved.inPosition
-              ? "Looking for you — make sure your whole body is in frame."
-              : isReps
-                ? REP_CUE_COPY[result.cue as RepCue](remaining)
-                : CUE_COPY[result.cue as HoldCue]({
-                    targetSec: Math.round(holdConfig.minHoldMs / 1000),
-                    remaining,
-                    lastSetSec: Math.round(lastSetMsRef.current / 1000),
-                  }),
-        });
+          message,
+          tone: good ? "good" : bad ? "bad" : inPosition ? "good" : "warn",
+        }));
       }
     }
 
@@ -600,37 +595,17 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
       video: HTMLVideoElement,
       landmarks: NormalizedLandmark[] | null,
       side: "left" | "right" | null,
-      cue: HoldCue | RepCue,
+      good: boolean,
     ) {
-      // Size the canvas to the box it is shown in and map landmarks with the
-      // same maths as `object-fit: cover` on the video. Drawing at the video's
-      // native size and letting CSS stretch it misaligns the skeleton whenever
-      // the box and the video have different aspect ratios (they always do).
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const bw = Math.max(1, Math.round(canvas.clientWidth * dpr));
-      const bh = Math.max(1, Math.round(canvas.clientHeight * dpr));
-      if (canvas.width !== bw || canvas.height !== bh) {
-        canvas.width = bw;
-        canvas.height = bh;
+      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
       }
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
-      ctx.clearRect(0, 0, bw, bh);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (!landmarks || landmarks.length === 0) return;
-      const scale = Math.max(bw / video.videoWidth, bh / video.videoHeight);
-      const ox = (bw - video.videoWidth * scale) / 2;
-      const oy = (bh - video.videoHeight * scale) / 2;
-      renderSkeleton(
-        ctx,
-        (p) => ({
-          x: p.x * video.videoWidth * scale + ox,
-          y: p.y * video.videoHeight * scale + oy,
-        }),
-        dpr,
-        landmarks,
-        side,
-        cue,
-      );
+      renderSkeleton(ctx, canvas, landmarks, side, good);
     }
 
     start();
@@ -648,235 +623,257 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const endSession = useCallback(() => {
+  const save = useCallback(() => {
     stopSpeaking();
+    const details = setsRef.current;
+    const scored = details.filter((d) => d.form !== null);
+    const durationMs = startedAtRef.current ? Date.now() - startedAtRef.current : 0;
+    const bestHoldMs = Math.max(0, ...details.map((d) => d.heldMs));
     logExercise({
       conditionSlug: readActiveConditionSlug(),
       exerciseSlug: config.slug,
       exerciseName: config.name,
       reps: repsRef.current,
-      sets: 1,
-      durationMs: startedAtRef.current ? Date.now() - startedAtRef.current : 0,
-      avgScore: formCountRef.current
-        ? Math.round(formSumRef.current / formCountRef.current)
+      sets: isReps ? 1 : repsRef.current,
+      durationMs,
+      avgScore: scored.length
+        ? Math.round(scored.reduce((s, d) => s + (d.form ?? 0), 0) / scored.length)
         : null,
       partialReps: partialsRef.current || undefined,
+      setDetails: details,
+      bestHoldMs: bestHoldMs || undefined,
     });
     if (repsRef.current > 0) markCompletedToday();
-    if (onFinish) onFinish({ reps: repsRef.current });
-    else router.push("/progress");
-  }, [router, onFinish, config.slug, config.name]);
+    const result: CoachResult = { reps: repsRef.current, partials: partialsRef.current, sets: details, durationMs };
+    if (onFinish) onFinish(result);
+    else router.push(exitHref);
+  }, [config.slug, config.name, isReps, onFinish, router, exitHref]);
 
-  const busy = status !== "tracking" && status !== "calibrating" && status !== "lining-up";
-  const progressPct = isReps
-    ? Math.min(100, (ui.reps / Math.max(1, ui.targetReps)) * 100)
-    : ui.targetSec > 0
-      ? Math.min(100, (ui.elapsedSec / ui.targetSec) * 100)
-      : 0;
+  const exit = () => {
+    stopSpeaking();
+    if (onExit) onExit();
+    else router.push(exitHref);
+  };
 
-  const good = ui.cue === "banked" || ui.cue === "counted" || ui.cue === "holding";
-  const warn =
-    ui.cue === "nearly" || ui.cue === "descending" || ui.cue === "banked-partial";
-  const bad = ui.cue === "released-early" || ui.cue === "tooFast";
-  const cueClass = good
-    ? "bg-moss/10 text-moss"
-    : warn
-      ? "bg-amber/10 text-amber"
-      : bad
-        ? "bg-coral/10 text-coral"
-        : "bg-white/60 text-ink/70";
+  const unit = isReps ? "Rep" : "Set";
+  const current = Math.min(ui.reps + 1, config.targetReps);
+  const lastSet = sets[sets.length - 1];
+  const lastSetLine = lastSet
+    ? isReps
+      ? `Rep ${sets.length}: form ${lastSet.form ?? "–"}`
+      : `Set ${sets.length}: held ${Math.round(lastSet.heldMs / 1000)}s, form ${lastSet.form ?? "–"}`
+    : isReps
+      ? `${config.targetReps} reps`
+      : `${config.targetReps} sets of ${targetSec}s`;
+  const ringPct = isReps
+    ? (ui.reps / Math.max(1, config.targetReps)) * 100
+    : ui.cue === "banked"
+      ? 100
+      : (ui.elapsedSec / Math.max(1, targetSec)) * 100;
+  const messageColor =
+    ui.tone === "good" ? "text-success" : ui.tone === "bad" ? "text-coral" : ui.tone === "warn" ? "text-amber" : "text-ink";
 
   return (
-    <div className="space-y-4 pt-2">
-      <div className="relative mx-auto w-full overflow-hidden bg-night sm:rounded-3xl" style={{ height: "min(68dvh, 640px)" }}>
-        <video ref={videoRef} muted playsInline className="h-full w-full -scale-x-100 object-cover" />
-        <canvas ref={canvasRef} className="absolute inset-0 h-full w-full -scale-x-100" />
+    <div className="fixed inset-0 z-50 overflow-hidden bg-night text-white">
+      <video ref={videoRef} muted playsInline className="absolute inset-0 h-full w-full -scale-x-100 object-contain" />
+      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full -scale-x-100 object-contain" />
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{ background: "linear-gradient(180deg,rgba(10,25,30,.6),rgba(10,25,30,0) 24%,rgba(10,25,30,0) 56%,rgba(10,25,30,.85))" }}
+      />
 
-        {reference && (
-          <div className="absolute top-3 right-3 w-24 overflow-hidden rounded-2xl border-2 border-white/80 shadow-lg">
-            <ReferenceLoop clip={reference} compact className="aspect-[3/4] w-full" />
-          </div>
-        )}
+      {status === "lineup" && (
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <rect
+            x="8" y="12" width="84" height="66" rx="5" fill="none"
+            stroke={ui.count !== null || ui.hint === "hold-still" ? "#34D3A0" : "#fff"} strokeWidth="0.5" strokeDasharray="2.5 2" opacity="0.9"
+            vectorEffect="non-scaling-stroke"
+            style={{ strokeWidth: 2 }}
+          />
+        </svg>
+      )}
 
-        {busy && (
-          <div className="absolute inset-0 flex items-center justify-center bg-night/70 px-6 text-center">
-            <p className="font-sans text-sm text-white">
-              {status === "idle" && "Starting camera…"}
-              {status === "requesting" && "Requesting camera permission…"}
-              {status === "loading-model" && "Loading pose model…"}
-              {status === "error" && (error ?? "Camera unavailable. Check permissions and try again.")}
+      <div className="relative mx-auto flex h-full max-w-md flex-col px-4 pt-[calc(0.9rem+env(safe-area-inset-top))] pb-[calc(1rem+env(safe-area-inset-bottom))]">
+        <div className="flex items-center justify-between gap-2">
+          <button type="button" onClick={exit} aria-label="Close the coach" className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-lg backdrop-blur">
+            ×
+          </button>
+          <span className="min-w-0 flex-1 truncate font-sans text-sm font-extrabold">{config.name}</span>
+          <Pill tone="glass">
+            {status === "lineup" || status === "calibrating"
+              ? "Line up"
+              : status === "tracking"
+                ? `${unit} ${current} of ${config.targetReps}`
+                : sessionLabel ?? "Coach"}
+          </Pill>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !voiceOn;
+              setVoiceOn(next);
+              voiceOnRef.current = next;
+              if (!next) stopSpeaking();
+            }}
+            aria-pressed={voiceOn}
+            aria-label={voiceOn ? "Mute voice" : "Turn voice on"}
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-sm backdrop-blur"
+          >
+            {voiceOn ? "🔊" : "🔇"}
+          </button>
+        </div>
+
+        {(status === "idle" || status === "requesting" || status === "loading-model") && (
+          <div className="flex flex-1 flex-col items-center justify-center text-center">
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-mint" />
+            <p className="mt-4 font-sans text-sm text-white/85">
+              {status === "loading-model" ? "Loading the coach…" : "Asking for the camera…"}
             </p>
+            <p className="mt-1 font-sans text-xs text-white/55">Everything runs on this phone. Nothing is uploaded.</p>
           </div>
         )}
 
-        {status === "lining-up" && (
+        {status === "error" && (
+          <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
+            <p className="font-sans text-base font-bold">{error}</p>
+            <button type="button" onClick={exit} className={`${btnPrimary} mt-6`}>
+              Go back
+            </button>
+          </div>
+        )}
+
+        {(status === "lineup" || status === "calibrating") && (
           <>
-            {lineup.count !== null && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <span className="font-display text-[9rem] leading-none text-white drop-shadow-lg">
-                  {lineup.count}
+            <div className="mx-auto mt-4 rounded-full bg-white px-4 py-2.5 font-sans text-sm font-extrabold text-ink shadow-[0_8px_24px_rgba(0,0,0,.25)]">
+              {status === "calibrating"
+                ? "Hold still…"
+                : ui.count !== null
+                  ? "Perfect, starting in…"
+                  : HINT_COPY[ui.hint]}
+            </div>
+            <div className="flex flex-1 items-center justify-center">
+              {status === "lineup" && ui.count !== null && (
+                <span className="font-display text-8xl font-extrabold text-white drop-shadow-[0_4px_20px_rgba(0,0,0,.45)]" aria-live="assertive">
+                  {ui.count}
                 </span>
-              </div>
-            )}
-            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-night/90 to-transparent px-5 pt-10 pb-4">
-              <p
-                aria-live="polite"
-                className={`text-center font-display text-2xl ${
-                  lineup.hint === "ready" ? "text-mint" : "text-white"
-                }`}
-              >
-                {lineup.count !== null ? "Perfect, starting in…" : HINT_COPY[lineup.hint]}
-              </p>
-              <div className="mt-3 flex flex-wrap justify-center gap-1.5">
-                {lineup.checks.map((c) => (
-                  <span
-                    key={c.id}
-                    className={`rounded-full px-2.5 py-1 font-sans text-[11px] font-semibold ${
-                      c.ok ? "bg-success-soft text-success" : "bg-amber-soft text-amber"
-                    }`}
-                  >
+              )}
+            </div>
+            {ui.checks.length > 0 && (
+              <div className="grid grid-cols-2 gap-1.5">
+                {ui.checks.map((c) => (
+                  <Pill key={c.id} tone={c.ok ? "ok" : "warn"} className="justify-center py-1.5">
                     {c.ok ? "✓ " : ""}
                     {c.label}
-                  </span>
+                  </Pill>
                 ))}
               </div>
+            )}
+            <p className="mt-2.5 text-center font-sans text-xs text-white/85">
+              {status === "calibrating" ? "Finding your resting position" : config.setupHint}
+            </p>
+            {status === "lineup" && ui.lineupMs > LINEUP_ESCAPE_MS && (
               <button
                 type="button"
                 onClick={() => {
-                  skipSetupRef.current = true;
+                  forceStartRef.current = true;
                 }}
-                className="mx-auto mt-3 block min-h-11 px-3 font-sans text-xs text-white/70 underline"
+                className="mt-2 font-sans text-xs font-bold text-white underline underline-offset-4"
               >
-                Skip set-up
+                Start anyway
+              </button>
+            )}
+          </>
+        )}
+
+        {status === "tracking" && (
+          <>
+            <div className="mt-3 flex items-start justify-between">
+              <div className="flex flex-col gap-2">
+                <Pill tone={ui.inPosition ? "ok" : "warn"} className="self-start">
+                  {ui.inPosition ? "✓ In position" : "Get into position"}
+                </Pill>
+                {reference && showRef && (
+                  <button type="button" onClick={() => setShowRef(false)} aria-label="Hide the reference clip" className="w-24">
+                    <ReferenceLoop clip={reference} compact className="aspect-[3/4] w-24 rounded-xl" />
+                  </button>
+                )}
+                {reference && !showRef && (
+                  <button type="button" onClick={() => setShowRef(true)} className="self-start">
+                    <Pill tone="glass">▶ Watch how</Pill>
+                  </button>
+                )}
+              </div>
+              <div className="rounded-full bg-white/92 p-0.5">
+                <Ring pct={ringPct} size={78} color={ui.inPosition ? "#2FA67F" : "#D98A3A"}>
+                  {isReps ? ui.reps : ui.cue === "banked" ? "✓" : `${ui.elapsedSec}s`}
+                </Ring>
+              </div>
+            </div>
+            <div className="flex-1" />
+            <div className="rounded-[22px] bg-white/95 p-3.5 text-ink shadow-[0_8px_24px_rgba(0,0,0,.2)]">
+              <p className={`font-sans text-sm font-extrabold ${messageColor}`} aria-live="polite">
+                {ui.message}
+              </p>
+              <div className="mt-2 flex justify-between font-sans text-[11px] text-ink/55">
+                <span>{lastSetLine}</span>
+                <span>
+                  {isReps
+                    ? `${ui.reps} / ${config.targetReps}`
+                    : ui.cue === "banked"
+                      ? "Release"
+                      : `Hold ${Math.min(ui.elapsedSec, targetSec)} / ${targetSec}s`}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStatus("done")}
+                className="mt-3 w-full rounded-full bg-chip py-2.5 font-sans text-xs font-bold text-ink/70"
+              >
+                {ui.reps > 0 ? "Finish" : "Stop"}
               </button>
             </div>
           </>
         )}
 
-        {status === "calibrating" && (
-          <div className="absolute inset-x-0 top-3 flex justify-center">
-            <span className="rounded-full bg-night/70 px-3 py-1 font-sans text-[11px] text-white/90">
-              Hold still — finding your resting position
-            </span>
-          </div>
-        )}
-      </div>
-
-      <div className="space-y-4 px-5">
-      <div className="flex items-center justify-between gap-3">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-moss" />
-          <span className="truncate font-sans text-[11px] text-ink/55">
-            Processed on-device — nothing uploaded
-          </span>
-        </span>
-        <button
-          type="button"
-          onClick={() => {
-            const next = !voiceOn;
-            setVoiceOn(next);
-            voiceOnRef.current = next;
-            if (!next) stopSpeaking();
-          }}
-          aria-pressed={voiceOn}
-          className="shrink-0 rounded-full border border-mist bg-white/60 px-3 py-1.5 font-sans text-[11px] font-medium text-ink/70"
-        >
-          {voiceOn ? "🔊 Voice on" : "🔇 Voice off"}
-        </button>
-      </div>
-
-      <div className="rounded-2xl border border-mist bg-white/60 p-4">
-        <div className="flex items-baseline justify-between">
-          <h3 className="font-sans text-sm font-semibold text-ink">{config.name} — live check</h3>
-          <span className="font-mono text-sm font-semibold text-ink/50">
-            {isReps ? "Rep" : "Set"} {Math.min(ui.reps + 1, ui.targetReps)} of{" "}
-            {ui.targetReps}
-          </span>
-        </div>
-
-        <div className="mt-4 flex items-center justify-center">
-          <div className="relative flex h-28 w-28 items-center justify-center">
-            <svg viewBox="0 0 100 100" className="absolute inset-0 -rotate-90">
-              <circle cx="50" cy="50" r="44" fill="none" stroke="#E7DFCC" strokeWidth="8" />
-              <circle
-                cx="50"
-                cy="50"
-                r="44"
-                fill="none"
-                stroke={good ? "#4B7A63" : warn ? "#D98A3A" : bad ? "#BE4B3C" : "#1C332B"}
-                strokeWidth="8"
-                strokeLinecap="round"
-                strokeDasharray={`${2 * Math.PI * 44}`}
-                strokeDashoffset={`${2 * Math.PI * 44 * (1 - progressPct / 100)}`}
-                className="transition-all duration-150"
-              />
-            </svg>
-            <span className="font-mono text-2xl font-semibold text-pine">
-              {isReps ? ui.reps : `${ui.elapsedSec}s`}
-            </span>
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          <div className="rounded-xl bg-paper px-2 py-2.5 text-center">
-            <p className="font-mono text-xl font-semibold text-pine">
-              {ui.reps}
-              {ui.partials > 0 && (
-                <span className="font-sans text-[10px] font-medium text-amber">
-                  {" "}
-                  {ui.partials}p
-                </span>
+        {status === "done" && (
+          <div className="flex flex-1 flex-col justify-end">
+            <div className="rounded-[26px] bg-white p-5 text-ink">
+              <p className="font-display text-2xl font-extrabold">
+                {ui.reps >= config.targetReps ? "Nice work." : ui.reps > 0 ? "Here's what you did." : "Nothing counted yet."}
+              </p>
+              <p className="mt-1 font-sans text-sm text-ink/60">
+                {ui.reps} of {config.targetReps} {isReps ? "reps" : "sets"}
+                {ui.partials ? `, ${ui.partials} partial` : ""}.
+              </p>
+              {sets.length > 0 && (
+                <ul className="mt-3 max-h-48 space-y-1.5 overflow-auto">
+                  {sets.map((s, i) => (
+                    <li key={i} className="flex items-center justify-between rounded-xl bg-chip px-3 py-2 font-sans text-xs">
+                      <span className="font-bold">
+                        {unit} {i + 1}
+                        {s.partial ? " · partial" : ""}
+                      </span>
+                      <span className="text-ink/60">
+                        {!isReps && `held ${Math.round(s.heldMs / 1000)}s · `}form {s.form ?? "–"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
               )}
-            </p>
-            <p className="font-sans text-[11px] text-ink/55">
-              {isReps ? "Reps" : "Sets"} done
-            </p>
-          </div>
-          <div className="rounded-xl bg-paper px-2 py-2.5 text-center">
-            <p
-              className={`font-mono text-xl font-semibold ${
-                ui.form === null
-                  ? "text-ink/35"
-                  : ui.form >= 85
-                    ? "text-moss"
-                    : ui.form >= 60
-                      ? "text-amber"
-                      : "text-coral"
-              }`}
-            >
-              {ui.form === null ? "–" : ui.form}
-              {ui.form !== null && <span className="text-xs text-ink/45">%</span>}
-            </p>
-            <p className="font-sans text-[11px] text-ink/55">Form</p>
-          </div>
-          <div className="rounded-xl bg-paper px-2 py-2.5 text-center">
-            <p className="font-mono text-xl font-semibold text-pine">
-              {isReps ? ui.targetReps : ui.targetSec}
-              {!isReps && <span className="text-xs text-ink/50">s</span>}
-            </p>
-            <p className="font-sans text-[11px] text-ink/55">
-              {isReps ? "Target" : "Target hold"}
-            </p>
-          </div>
-        </div>
-
-        {ui.kneeAngleDeg !== null && (
-          <div className="mt-3 flex items-center justify-between font-mono text-xs text-ink/50">
-            <span>Knee angle</span>
-            <span>{Math.round(ui.kneeAngleDeg)}°</span>
+              <button type="button" onClick={save} className={`${btnPrimary} mt-4`}>
+                {onFinish ? "Save and continue" : "Save"}
+              </button>
+              {ui.reps < config.targetReps && (
+                <button
+                  type="button"
+                  onClick={() => setStatus("tracking")}
+                  className="mt-3 w-full font-sans text-xs font-bold text-ink/55"
+                >
+                  Keep going
+                </button>
+              )}
+            </div>
           </div>
         )}
-
-        <p className={`mt-3 rounded-xl px-3 py-2 font-sans text-sm ${cueClass}`}>{ui.message}</p>
-
-        <button
-          type="button"
-          onClick={endSession}
-          className="mt-4 flex w-full items-center justify-center rounded-xl bg-amber py-3 font-sans text-sm font-semibold text-ink transition hover:opacity-90"
-        >
-          {finishLabel ?? "End session & save"}
-        </button>
-      </div>
       </div>
     </div>
   );
@@ -884,22 +881,23 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
 
 function renderSkeleton(
   ctx: CanvasRenderingContext2D,
-  toXY: (p: NormalizedLandmark) => { x: number; y: number },
-  dpr: number,
+  canvas: HTMLCanvasElement,
   landmarks: NormalizedLandmark[],
   side: "left" | "right" | null,
-  cue: HoldCue | RepCue,
+  good: boolean,
 ) {
-  const neutral = "#FFFFFFcc";
-  const activeColor =
-    cue === "banked" || cue === "holding" ? "#34B58A" : cue === "nearly" ? "#F2A93B" : cue === "released-early" ? "#E2604F" : "#34B58A";
+  const w = canvas.width;
+  const h = canvas.height;
+  const toXY = (p: NormalizedLandmark) => ({ x: p.x * w, y: p.y * h });
+  const line = "#34D3A0";
+  const active = good ? "#34D3A0" : "#F2A93B";
 
-  const indices =
+  const indices: number[] =
     side === "left"
-      ? { hip: LANDMARK.leftHip, knee: LANDMARK.leftKnee, ankle: LANDMARK.leftAnkle }
+      ? [LANDMARK.leftHip, LANDMARK.leftKnee, LANDMARK.leftAnkle]
       : side === "right"
-        ? { hip: LANDMARK.rightHip, knee: LANDMARK.rightKnee, ankle: LANDMARK.rightAnkle }
-        : null;
+        ? [LANDMARK.rightHip, LANDMARK.rightKnee, LANDMARK.rightAnkle]
+        : [];
 
   const connections: [number, number][] = [
     [11, 12], [11, 23], [12, 24], [23, 24],
@@ -908,17 +906,15 @@ function renderSkeleton(
     [27, 29], [29, 31], [28, 30], [30, 32],
   ];
 
-  ctx.lineWidth = 3 * dpr;
+  const scale = Math.max(1, w / 640);
   ctx.lineCap = "round";
   for (const [a, b] of connections) {
     const p1 = landmarks[a];
     const p2 = landmarks[b];
-    if (!p1 || !p2) continue;
-    const isActiveLeg =
-      indices !== null &&
-      (a === indices.hip || a === indices.knee || a === indices.ankle) &&
-      (b === indices.hip || b === indices.knee || b === indices.ankle);
-    ctx.strokeStyle = isActiveLeg ? activeColor : neutral;
+    if (!p1 || !p2 || visibilityOf(p1) < 0.5 || visibilityOf(p2) < 0.5) continue;
+    const isActive = indices.includes(a) && indices.includes(b);
+    ctx.strokeStyle = isActive ? active : line;
+    ctx.lineWidth = (isActive ? 5 : 3) * scale;
     const { x: x1, y: y1 } = toXY(p1);
     const { x: x2, y: y2 } = toXY(p2);
     ctx.beginPath();
@@ -928,11 +924,15 @@ function renderSkeleton(
   }
 
   landmarks.forEach((lm, i) => {
+    if (i < 11 || visibilityOf(lm) < 0.5) return;
     const { x, y } = toXY(lm);
-    const isActive = indices !== null && (i === indices.hip || i === indices.knee || i === indices.ankle);
-    ctx.fillStyle = isActive ? activeColor : neutral;
+    const isActive = indices.includes(i);
     ctx.beginPath();
-    ctx.arc(x, y, (isActive ? 6 : 5) * dpr, 0, Math.PI * 2);
+    ctx.arc(x, y, (isActive ? 6 : 4) * scale, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff";
     ctx.fill();
+    ctx.lineWidth = 2 * scale;
+    ctx.strokeStyle = isActive ? active : line;
+    ctx.stroke();
   });
 }

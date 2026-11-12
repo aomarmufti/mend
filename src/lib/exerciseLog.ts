@@ -6,6 +6,8 @@
  * Prototype-only local persistence — a real backend would replace this.
  */
 
+import { writeRaw } from "@/lib/store";
+
 const STORAGE_KEY = "mend:exercise-log:v1";
 const MAX_RECORDS = 500;
 
@@ -28,6 +30,21 @@ export interface ExerciseRecord {
   selfReported?: boolean;
   /** Of `reps`, how many were held short of the target and counted anyway. */
   partialReps?: number;
+  /**
+   * One entry per banked set or rep, in order: how long it was held (0 for a
+   * movement rep) and its own form score. Form is scored per rep, after the
+   * rep, so this is what the user was shown.
+   */
+  setDetails?: SetDetail[];
+  /** Longest single hold in this record, for holds. */
+  bestHoldMs?: number;
+}
+
+export interface SetDetail {
+  heldMs: number;
+  /** 0-100, or null when the set was not camera-scored. */
+  form: number | null;
+  partial?: boolean;
 }
 
 // Deliberately NOT toISOString().slice(0, 10) — that is the UTC calendar date,
@@ -52,12 +69,7 @@ function read(): ExerciseRecord[] {
 }
 
 function write(records: ExerciseRecord[]) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
-  } catch {
-    /* private mode / quota — history is a nicety, not a blocker */
-  }
+  writeRaw(STORAGE_KEY, JSON.stringify(records));
 }
 
 export function logExercise(
@@ -83,8 +95,12 @@ export function allRecords(): ExerciseRecord[] {
 export const NO_RECORDS: ExerciseRecord[] = [];
 
 function rawSnapshotKey(): string {
-  const raw =
-    typeof window === "undefined" ? "" : window.localStorage.getItem(STORAGE_KEY);
+  let raw: string | null = null;
+  try {
+    raw = typeof window === "undefined" ? "" : window.localStorage.getItem(STORAGE_KEY);
+  } catch {
+    raw = null;
+  }
   return `${localDateKey(new Date())}|${raw ?? ""}`;
 }
 

@@ -1,3 +1,5 @@
+import { writeRaw } from "@/lib/store";
+
 // Prototype-only local persistence. A real backend would replace all of this;
 // it exists so the Today <-> Session <-> Progress flow feels alive across
 // reloads instead of resetting to static mock data every time.
@@ -43,12 +45,16 @@ function read(): SessionLog {
 }
 
 function write(log: SessionLog) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(log));
+  writeRaw(STORAGE_KEY, JSON.stringify(log));
 }
 
 function rawSnapshotKey(): string {
-  const raw = typeof window === "undefined" ? "" : window.localStorage.getItem(STORAGE_KEY);
+  let raw: string | null = null;
+  try {
+    raw = typeof window === "undefined" ? "" : window.localStorage.getItem(STORAGE_KEY);
+  } catch {
+    raw = null;
+  }
   return `${todayKey()}|${raw ?? ""}`;
 }
 
@@ -155,3 +161,23 @@ export const weekAdherence = memoized(
     return days;
   }
 );
+
+/** Every pain check-in, oldest first, as date/value pairs. */
+export const painEntries = memoized((): { date: string; value: number }[] => {
+  const log = read();
+  return Object.keys(log.painLog)
+    .sort()
+    .map((date) => ({ date, value: log.painLog[date] }));
+});
+
+/** Dates (YYYY-MM-DD) with a completed session. */
+export const completedDates = memoized((): string[] => [...read().completedDates].sort());
+
+/** Log pain for a specific day. Used by onboarding to record the starting point. */
+export function logPainOn(dateKey: string, value: number) {
+  const log = read();
+  log.painLog[dateKey] = value;
+  write(log);
+}
+
+export { localDateKey as sessionDateKey, todayKey };

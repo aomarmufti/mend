@@ -282,3 +282,14 @@ export function stepGate(prev: GateState, a: SetupAssessment, now: number): Gate
     go: false,
   };
 }
+
+/** Mean luminance of an RGBA buffer, 0 to 1. Feeds `FrameStats.luma`. */
+export function meanLuminance(data: Uint8ClampedArray): number {
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    sum += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+    n += 1;
+  }
+  return n ? sum / n / 255 : 0;
+}

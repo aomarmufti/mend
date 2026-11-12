@@ -1,185 +1,145 @@
 "use client";
 
-import { useRef, useState } from "react";
 import Link from "next/link";
-import dynamic from "next/dynamic";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Exercise } from "@/data/exercises";
-import { SUPPORTED_COACH_SLUG } from "@/data/exercises";
-import { markCompletedToday } from "@/lib/localSession";
-import { logExercise } from "@/lib/exerciseLog";
-import { readActiveConditionSlug } from "@/lib/activeCondition";
-import { CheckIcon } from "@/components/icons";
-import { Logo } from "@/components/brand/Logo";
+import type { CatalogExercise } from "@/data/catalog";
+import { areaLowerLabel } from "@/data/catalog";
+import { ExerciseIntro } from "@/components/exercise/ExerciseIntro";
+import { ExerciseRunner } from "@/components/coach/ExerciseRunner";
+import type { CoachResult } from "@/components/coach/HoldCoach";
+import { PainCheckIn } from "@/components/today/PainCheckIn";
+import { Card, ProgressBar, btnPrimary, eyebrow } from "@/components/ui/kit";
+import { useHydrated } from "@/lib/profile";
+import { useActivePlan, type ActivePlan } from "@/lib/usePlan";
+import { doneToday, useAllRecords } from "@/lib/progress";
+import { LogoMark } from "@/components/brand/Logo";
 
-// Touches navigator.mediaDevices, so it can only run in the browser.
-const PoseCoach = dynamic(
-  () => import("@/components/coach/PoseCoach").then((m) => m.PoseCoach),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="mt-5 flex aspect-[4/3] items-center justify-center rounded-2xl bg-ink/90">
-        <p className="font-sans text-sm text-paper">Starting the camera…</p>
-      </div>
-    ),
-  },
-);
-
-export function SessionRunner({ exercises }: { exercises: Exercise[] }) {
+export function SessionRunner() {
+  const hydrated = useHydrated();
+  const active = useActivePlan();
+  const records = useAllRecords();
   const router = useRouter();
+
+  const nothing = hydrated && (!active || active.usable.length === 0);
+  useEffect(() => {
+    if (nothing) router.replace("/today");
+  }, [nothing, router]);
+
+  if (!hydrated || !active || nothing) return <div className="min-h-screen" />;
+  return <Session active={active} doneSlugs={doneToday(records)} />;
+}
+
+interface Outcome {
+  exercise: CatalogExercise;
+  result: CoachResult | null;
+}
+
+function Session({ active, doneSlugs }: { active: ActivePlan; doneSlugs: Set<string> }) {
+  const router = useRouter();
+  // Fixed at the start: resume with what is left today, or the whole session
+  // again when everything is already done.
+  const [list] = useState(() => {
+    const left = active.usable.filter((e) => !doneSlugs.has(e.slug));
+    return left.length ? left : active.usable;
+  });
   const [index, setIndex] = useState(0);
-  const [done, setDone] = useState(false);
-  const [coaching, setCoaching] = useState(false);
-  const [startedAt] = useState(() => Date.now());
-  const loggedRef = useRef<Set<string>>(new Set());
+  const [running, setRunning] = useState<null | "camera" | "manual">(null);
+  const [outcomes, setOutcomes] = useState<Outcome[]>([]);
+  const [painLogged, setPainLogged] = useState(false);
 
-  // Marking an exercise done has to leave a record, or Today reports the day
-  // complete while Progress reports nothing happened. Reps are null-equivalent
-  // here: this is a self-reported completion, not a counted one, and the
-  // history must not imply otherwise.
-  const logManual = (exercise: Exercise) => {
-    if (loggedRef.current.has(exercise.slug)) return;
-    loggedRef.current.add(exercise.slug);
-    logExercise({
-      conditionSlug: readActiveConditionSlug(),
-      exerciseSlug: exercise.slug,
-      exerciseName: exercise.name,
-      reps: 0,
-      sets: 1,
-      durationMs: Date.now() - startedAt,
-      avgScore: null,
-      selfReported: true,
-    });
+  const advance = (result: CoachResult | null) => {
+    const exercise = list[index];
+    setOutcomes((o) => [...o, { exercise, result }]);
+    setRunning(null);
+    setIndex((i) => i + 1);
+    window.scrollTo(0, 0);
   };
 
-  const goNext = (isLast: boolean) => {
-    setCoaching(false);
-    logManual(exercises[index]);
-    if (isLast) {
-      markCompletedToday();
-      setDone(true);
-    } else {
-      setIndex((i) => i + 1);
-    }
-  };
-
-  if (done) {
+  if (index >= list.length) {
+    const area = areaLowerLabel(active.shape.areaLabel);
     return (
-      <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6 text-center">
-        <span className="flex h-16 w-16 items-center justify-center rounded-full bg-moss/15">
-          <CheckIcon className="h-8 w-8 text-moss" />
-        </span>
-        <h1 className="mt-5 font-display text-3xl">Session complete.</h1>
-        <p className="mt-2 font-sans text-sm text-ink/60">
-          Nice work — that&apos;s today done. See you tomorrow.
-        </p>
-        <Link
-          href="/today"
-          className="mt-8 flex w-full items-center justify-center rounded-xl bg-pine py-3.5 font-sans text-sm font-semibold text-paper transition hover:opacity-90"
-        >
+      <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col px-5 pt-[calc(2.5rem+env(safe-area-inset-top))] pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
+        <span className="flex h-16 w-16 items-center justify-center rounded-full bg-success-soft text-3xl text-success">✓</span>
+        <h1 className="mt-4 font-display text-3xl font-extrabold">Session complete.</h1>
+        <p className="mt-1 font-sans text-sm text-ink/60">That&apos;s today done. See you tomorrow.</p>
+
+        <div className="mt-5 grid gap-2">
+          {outcomes.map(({ exercise, result }) => {
+            const scored = result?.sets.filter((s) => s.form !== null) ?? [];
+            const form = scored.length ? Math.round(scored.reduce((a, s) => a + (s.form ?? 0), 0) / scored.length) : null;
+            return (
+              <Card key={exercise.slug} className="flex items-center justify-between p-3.5">
+                <span className="min-w-0">
+                  <span className="block truncate font-sans text-sm font-bold">{exercise.name}</span>
+                  <span className="font-sans text-xs text-ink/55">
+                    {result === null || result.reps === 0
+                      ? "Skipped"
+                      : `${result.reps} ${exercise.coach?.mode === "reps" || exercise.manual.kind === "reps" ? "reps" : "sets"}`}
+                  </span>
+                </span>
+                {form !== null && (
+                  <span className="font-sans text-sm font-extrabold text-mint-deep">form {form}</span>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+
+        <div className="mt-4">
+          {painLogged ? (
+            <p className="text-center font-sans text-xs text-ink/55">Check-in saved.</p>
+          ) : (
+            <PainCheckIn area={area} onDone={() => setPainLogged(true)} />
+          )}
+        </div>
+
+        <div className="flex-1" />
+        <Link href="/today" className={`${btnPrimary} mt-6`}>
           Back to Today
         </Link>
-
-        <Logo size={20} className="mt-10 text-ink/35" />
+        <Link href="/progress" className="mt-3 text-center font-sans text-xs font-bold text-ink/55">
+          See your progress
+        </Link>
+        <LogoMark className="mx-auto mt-6 h-5 w-5 text-ink/30" />
       </div>
     );
   }
 
-  const exercise = exercises[index];
-  const isLast = index === exercises.length - 1;
+  const exercise = list[index];
+  const label = `${index + 1} of ${list.length}`;
+
+  if (running) {
+    return (
+      <ExerciseRunner
+        key={exercise.slug + running}
+        exercise={exercise}
+        camera={running === "camera"}
+        sessionLabel={label}
+        onFinish={(r) => advance(r)}
+        onExit={() => setRunning(null)}
+      />
+    );
+  }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col px-5 pt-8 pb-8">
-      <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={() => router.push("/today")}
-          className="font-sans text-sm text-ink/50"
-        >
-          ← Exit
-        </button>
-        <span className="font-mono text-xs text-ink/50">
-          {index + 1} of {exercises.length}
-        </span>
-      </div>
-
-      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-mist">
-        <div
-          className="h-full rounded-full bg-moss transition-all"
-          style={{ width: `${((index + 1) / exercises.length) * 100}%` }}
-        />
-      </div>
-
-      <div className="mt-8 flex-1">
-        <span className="font-sans text-xs font-semibold tracking-wide text-moss uppercase">
-          {exercise.stage} stage
-        </span>
-        <h1 className="mt-1 font-display text-3xl">{exercise.name}</h1>
-        <p className="mt-1 font-mono text-sm text-amber">{exercise.dosage}</p>
-
-        <div className="mt-5 rounded-2xl border border-mist bg-white/60 p-4">
-          <h3 className="font-sans text-sm font-semibold text-ink">Position</h3>
-          <p className="mt-1.5 font-sans text-sm leading-relaxed text-ink/70">
-            {exercise.position}
-          </p>
-        </div>
-
-        {exercise.slug === SUPPORTED_COACH_SLUG &&
-          (coaching ? (
-            <div className="mt-5 -mx-5">
-              <PoseCoach
-                finishLabel="Save reps &amp; continue"
-                onFinish={() => goNext(isLast)}
-              />
-              <button
-                type="button"
-                onClick={() => setCoaching(false)}
-                className="mt-3 w-full px-5 text-center font-sans text-sm text-ink/50"
-              >
-                Turn the camera off
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setCoaching(true)}
-              className="mt-5 flex w-full items-center justify-between rounded-2xl bg-pine px-4 py-3.5 text-left text-paper transition hover:opacity-90"
-            >
-              <span>
-                <span className="block font-sans text-sm font-semibold">
-                  Use the camera for this one
-                </span>
-                <span className="mt-0.5 block font-sans text-xs text-paper/70">
-                  Watch the target movement and get live form feedback
-                </span>
-              </span>
-              <span className="shrink-0 font-sans text-lg">→</span>
+    <ExerciseIntro
+      key={exercise.slug}
+      exercise={exercise}
+      back={{ onClick: () => router.push("/today"), label: "Exit session" }}
+      header={
+        <div className="mt-3">
+          <div className="flex justify-between">
+            <span className={eyebrow}>{active.shape.areaLabel} plan · exercise {label}</span>
+            <button type="button" onClick={() => advance(null)} className="font-sans text-xs font-bold text-ink/45">
+              Skip
             </button>
-          ))}
-
-        <div className="mt-4 rounded-2xl border border-mist bg-white/60 p-4">
-          <h3 className="font-sans text-sm font-semibold text-ink">Cues</h3>
-          <ul className="mt-2 space-y-2">
-            {exercise.cues.map((cue, i) => (
-              <li
-                key={i}
-                className="flex items-start gap-2 font-sans text-sm text-ink/70"
-              >
-                <CheckIcon className="mt-0.5 h-4 w-4 shrink-0 text-moss" />
-                {cue}
-              </li>
-            ))}
-          </ul>
+          </div>
+          <ProgressBar pct={(index / list.length) * 100} className="mt-2" />
         </div>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => goNext(isLast)}
-        className="mt-6 flex w-full items-center justify-center rounded-xl bg-amber py-3.5 font-sans text-sm font-semibold text-ink transition hover:opacity-90"
-      >
-        {isLast ? "Finish session" : "Mark done — next exercise"}
-      </button>
-    </div>
+      }
+      onCamera={() => setRunning("camera")}
+      onManual={() => setRunning("manual")}
+    />
   );
 }

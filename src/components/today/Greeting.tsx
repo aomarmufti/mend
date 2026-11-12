@@ -10,15 +10,12 @@ function greetingForHour(hour: number): string {
   return "Good evening";
 }
 
-// A statically-prerendered page can't know the visitor's local time of day at
-// build time, and the server's clock/timezone isn't the visitor's anyway —
-// so this reads the browser's local clock instead of computing on the server.
+// The server's clock is not the visitor's, so this reads the browser's.
 export function Greeting() {
   const label = useSyncExternalStore(
     noopSubscribe,
     () => greetingForHour(new Date().getHours()),
-    () => "Hello"
+    () => "Hello",
   );
-
   return <>{label}</>;
 }
