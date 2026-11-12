@@ -104,6 +104,16 @@ export const VOICE = {
         : `Good job. Full hold — that's the set done.`,
     );
   },
+  repCounted: (repNumber: number, remaining: number) => {
+    tone(880, 140);
+    buzz(80);
+    speak(remaining > 0 ? String(repNumber) : `${repNumber}. That's the set, nice work.`);
+  },
+  lineUp: (instruction: string) => speak(instruction.replace(/[↓↑]/g, "").trim()),
+  inPositionToStart: () => {
+    tone(660, 120);
+    speak("Great, you're in position. Hold still a moment.");
+  },
   releasedEarly: () => {
     tone(320, 220);
     speak("Lost the position. Get back into it when you're ready.");
