@@ -331,6 +331,7 @@ export function HoldCoach({
   const [voiceOn, setVoiceOn] = useState(true);
   const [needsTap, setNeedsTap] = useState(false);
   const [noBodyHelp, setNoBodyHelp] = useState(false);
+  const [helpDismissed, setHelpDismissed] = useState(false);
   const [bodySeen, setBodySeen] = useState(false);
   const [diag, setDiag] = useState("");
   const [showRef, setShowRef] = useState(true);
@@ -853,17 +854,6 @@ export function HoldCoach({
                   ? "Perfect, starting in…"
                   : HINT_COPY[ui.hint]}
             </div>
-            {status === "lineup" && noBodyHelp && ui.count === null && (
-              <div className="mx-auto mt-3 max-w-xs rounded-2xl bg-night/75 p-3.5 font-sans text-xs leading-relaxed text-white/90 backdrop-blur">
-                <p className="mb-1 font-bold text-white">We can&apos;t see you yet</p>
-                <ul className="list-disc space-y-0.5 pl-4">
-                  <li>Set your phone or laptop at about hip height, then walk back 2 to 3 metres.</li>
-                  <li>You should see your whole body on screen, head to feet.</li>
-                  <li>Turn a light on, and avoid standing in front of a bright window.</li>
-                </ul>
-                <p className="mt-2 font-mono text-[10px] text-white/50">{diag}</p>
-              </div>
-            )}
             <div className="flex flex-1 items-center justify-center">
               {status === "lineup" && ui.count !== null && (
                 <span className="font-display text-8xl font-extrabold text-white drop-shadow-[0_4px_20px_rgba(0,0,0,.45)]" aria-live="assertive">
@@ -871,6 +861,28 @@ export function HoldCoach({
                 </span>
               )}
             </div>
+            {/* Sits at the bottom, above the checks, so it never covers the
+                person it is trying to find. */}
+            {status === "lineup" && noBodyHelp && !helpDismissed && ui.count === null && (
+              <div className="relative mb-2 rounded-2xl bg-night/80 p-3 pr-8 font-sans text-[11px] leading-relaxed text-white/90 backdrop-blur">
+                <button
+                  type="button"
+                  onClick={() => setHelpDismissed(true)}
+                  aria-label="Hide these tips"
+                  className="absolute top-1.5 right-2 h-6 w-6 rounded-full text-sm text-white/70"
+                >
+                  ×
+                </button>
+                <p className="font-bold text-white">We can&apos;t see you yet</p>
+                <p className="mt-0.5">
+                  Set the camera at about hip height and step back until your whole body is on screen, in good light.
+                </p>
+                <p className="mt-1.5 font-mono text-[10px] text-white/55">{diag}</p>
+                <a href="/camera-check" className="mt-1.5 inline-block font-bold text-mint underline underline-offset-2">
+                  Still nothing? Run a camera check
+                </a>
+              </div>
+            )}
             {ui.checks.length > 0 && (
               <div className="grid grid-cols-2 gap-1.5">
                 {ui.checks.map((c) => (
