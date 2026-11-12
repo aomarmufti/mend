@@ -67,6 +67,17 @@ const NO_BODY_HELP_MS = 5_000;
  */
 const GPU_EMPTY_FRAMES = 45;
 const GPU_ERROR_FRAMES = 8;
+/**
+ * Frames go to the model through a 2D canvas, not the <video> element.
+ * Uploading a camera-backed <video> straight into WebGL yields blank frames
+ * on some browser and GPU combinations (Safari among them), so the model
+ * runs but never finds anyone, while 2D drawImage of the same video works.
+ * Downscaling also makes each detection cheaper; landmarks are normalised,
+ * so nothing downstream changes.
+ */
+const DETECT_MAX_WIDTH = 640;
+/** Run detection at least this often even if video.currentTime looks stuck. */
+const STALE_FRAME_MS = 100;
 
 export type { HoldSignal };
 
@@ -288,6 +299,8 @@ export function HoldCoach({
   const hitsRef = useRef(0);
   const errorRunRef = useRef(0);
   const lastSeenRef = useRef(0);
+  const frameCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastDetectAtRef = useRef(0);
 
   const holdConfig: HoldConfig = { ...DEFAULT_HOLD_CONFIG, ...config.hold };
   const repConfig: RepConfig = { ...DEFAULT_REP_CONFIG, ...config.rep };
@@ -319,6 +332,7 @@ export function HoldCoach({
   const [needsTap, setNeedsTap] = useState(false);
   const [noBodyHelp, setNoBodyHelp] = useState(false);
   const [bodySeen, setBodySeen] = useState(false);
+  const [diag, setDiag] = useState("");
   const [showRef, setShowRef] = useState(true);
 
   const setStatus = (s: Status) => {
@@ -447,11 +461,22 @@ export function HoldCoach({
       let landmarks: NormalizedLandmark[] | null = null;
 
       if (rebuildingRef.current) return;
-      if (video.currentTime !== lastVideoTimeRef.current) {
+      const freshFrame = video.currentTime !== lastVideoTimeRef.current || now - lastDetectAtRef.current > STALE_FRAME_MS;
+      if (freshFrame) {
         lastVideoTimeRef.current = video.currentTime;
+        lastDetectAtRef.current = now;
         framesRef.current += 1;
         try {
-          const result = landmarker.detectForVideo(video, now);
+          if (!frameCanvasRef.current) frameCanvasRef.current = document.createElement("canvas");
+          const fc = frameCanvasRef.current;
+          const fw = Math.min(DETECT_MAX_WIDTH, video.videoWidth);
+          const fh = Math.round((fw * video.videoHeight) / video.videoWidth);
+          if (fc.width !== fw || fc.height !== fh) {
+            fc.width = fw;
+            fc.height = fh;
+          }
+          fc.getContext("2d")?.drawImage(video, 0, 0, fw, fh);
+          const result = landmarker.detectForVideo(fc, now);
           landmarks = result.landmarks[0] ?? null;
           lastLandmarksRef.current = landmarks;
           errorRunRef.current = 0;
@@ -505,6 +530,9 @@ export function HoldCoach({
           lastUiRef.current = now;
           const since = Math.max(lastSeenRef.current, lineupStartRef.current);
           setNoBodyHelp(!landmarks && now - since > NO_BODY_HELP_MS);
+          setDiag(
+            `${delegateRef.current} · ${video.videoWidth}×${video.videoHeight} · frames ${framesRef.current} · found ${hitsRef.current} · errors ${errorRunRef.current}`,
+          );
           if (landmarks) setBodySeen(true);
           setUi((u) => ({
             ...u,
@@ -829,10 +857,11 @@ export function HoldCoach({
               <div className="mx-auto mt-3 max-w-xs rounded-2xl bg-night/75 p-3.5 font-sans text-xs leading-relaxed text-white/90 backdrop-blur">
                 <p className="mb-1 font-bold text-white">We can&apos;t see you yet</p>
                 <ul className="list-disc space-y-0.5 pl-4">
-                  <li>Prop the phone up at about hip height, then walk back 2 to 3 metres.</li>
+                  <li>Set your phone or laptop at about hip height, then walk back 2 to 3 metres.</li>
                   <li>You should see your whole body on screen, head to feet.</li>
                   <li>Turn a light on, and avoid standing in front of a bright window.</li>
                 </ul>
+                <p className="mt-2 font-mono text-[10px] text-white/50">{diag}</p>
               </div>
             )}
             <div className="flex flex-1 items-center justify-center">
