@@ -1,19 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import { Instrument_Serif, Inter, IBM_Plex_Mono } from "next/font/google";
+import { Plus_Jakarta_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { ShellChrome } from "@/components/ShellChrome";
 
-const instrumentSerif = Instrument_Serif({
-  variable: "--font-instrument-serif",
+const jakarta = Plus_Jakarta_Sans({
+  variable: "--font-jakarta",
   subsets: ["latin"],
-  weight: ["400"],
-  style: ["normal", "italic"],
-});
-
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  weight: ["400", "500", "600", "700", "800"],
 });
 
 const ibmPlexMono = IBM_Plex_Mono({
@@ -31,6 +24,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  themeColor: "#F3F8F4",
 };
 
 export default function RootLayout({
@@ -41,9 +35,9 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${instrumentSerif.variable} ${inter.variable} ${ibmPlexMono.variable} h-full`}
+      className={`${jakarta.variable} ${ibmPlexMono.variable} h-full`}
     >
-      <body className="min-h-full bg-mist font-sans text-ink antialiased">
+      <body className="min-h-full font-sans text-ink antialiased">
         <ShellChrome>{children}</ShellChrome>
       </body>
     </html>

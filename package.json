@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx tests/repCounting.test.mjs && tsx tests/formQuality.test.mjs",
+    "test": "tsx tests/repCounting.test.mjs && tsx tests/formQuality.test.mjs && tsx tests/framing.test.mjs && tsx tests/heelSlide.test.mjs && tsx tests/progress.test.mjs",
     "calibrate": "node scripts/calibrate.mjs",
     "replay": "node scripts/replay.mjs"
   },

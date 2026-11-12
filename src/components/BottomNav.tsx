@@ -2,46 +2,39 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  HomeIcon,
-  LibraryIcon,
-  CameraIcon,
-  ProgressIcon,
-} from "@/components/icons";
+import { HomeIcon, LibraryIcon, ProgressIcon } from "@/components/icons";
 
 const tabs = [
   { href: "/today", label: "Today", Icon: HomeIcon },
-  { href: "/library", label: "Library", Icon: LibraryIcon },
-  { href: "/coach", label: "Coach", Icon: CameraIcon },
+  { href: "/plan", label: "Plan", Icon: LibraryIcon },
   { href: "/progress", label: "Progress", Icon: ProgressIcon },
 ];
 
+/** Floating pill tab bar. Three tabs: Today, Plan, Progress. */
 export function BottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="sticky bottom-0 z-40 border-t border-mist bg-paper/95 backdrop-blur">
-      <div className="mx-auto flex max-w-md items-stretch justify-between px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))]">
+    <nav
+      aria-label="Main"
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+    >
+      <div className="pointer-events-auto flex w-full max-w-sm items-stretch gap-1 rounded-full border border-white/70 bg-white/85 p-1.5 shadow-[0_8px_30px_rgba(30,42,50,0.12)] backdrop-blur">
         {tabs.map(({ href, label, Icon }) => {
           const active = pathname === href || pathname.startsWith(href + "/");
           return (
             <Link
               key={href}
               href={href}
-              className="flex flex-1 flex-col items-center gap-1 rounded-xl px-2 py-1.5"
+              aria-current={active ? "page" : undefined}
+              className={`flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-2 font-sans text-[13px] font-semibold transition ${
+                active
+                  ? "bg-success-soft text-success"
+                  : "text-ink/50 hover:text-ink/80"
+              }`}
             >
-              <span className="relative">
-                <Icon
-                  className={`h-6 w-6 ${active ? "text-pine" : "text-ink/40"}`}
-                />
-              </span>
-              <span
-                className={`font-sans text-[11px] font-medium ${
-                  active ? "text-pine" : "text-ink/40"
-                }`}
-              >
-                {label}
-              </span>
+              <Icon className="h-5 w-5" />
+              {label}
             </Link>
           );
         })}
