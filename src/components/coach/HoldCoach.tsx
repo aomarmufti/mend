@@ -27,12 +27,20 @@ import {
   type ReadabilityTracker,
 } from "@/components/coach/holdMath";
 import {
-  assessFraming,
+  assessSetup,
+  stepGate,
+  initialGate,
   meanLuminance,
-  type Framing,
-  type FramingResult,
-  type Posture,
-} from "@/components/coach/framing";
+  DEFAULT_SETUP,
+  HINT_COPY,
+  type GateState,
+  type HintId,
+  type SetupCheck,
+  type SetupSpec,
+} from "@/components/coach/setupCheck";
+
+export type Framing = "side" | "front";
+export type Posture = "standing" | "lying";
 import { ReferenceLoop, type ReferenceClip } from "@/components/coach/ReferenceLoop";
 import { logExercise, type SetDetail } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
@@ -48,7 +56,6 @@ const MODEL_URL = "/mediapipe/models/pose_landmarker_lite.task";
 const CALIBRATION_FRAMES = 30;
 const UI_INTERVAL_MS = 100;
 /** How long the line-up checks must all pass before coaching starts. */
-const LINEUP_HOLD_MS = 1_000;
 /** After this long, offer to start without a perfect line-up. */
 const LINEUP_ESCAPE_MS = 8_000;
 
@@ -141,7 +148,10 @@ interface UiState {
   /** Correction while out of position, or the coaching line while in it. */
   message: string;
   tone: "good" | "warn" | "bad" | "neutral";
-  framing: FramingResult | null;
+  /** Line-up: what to do next, the 3-2-1 count, and the four checks. */
+  hint: HintId;
+  count: number | null;
+  checks: SetupCheck[];
   lineupMs: number;
 }
 
@@ -244,12 +254,12 @@ export function HoldCoach({
   const lumaRef = useRef<{ value: number | null; at: number }>({ value: null, at: 0 });
   const lumaCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lineupStartRef = useRef(0);
-  const lineupOkSinceRef = useRef<number | null>(null);
+  const gateRef = useRef<GateState>(initialGate);
   const forceStartRef = useRef(false);
   const spokenCueRef = useRef<HoldCue | RepCue | null>(null);
   const spokenCountRef = useRef<number | null>(null);
   const spokenUnreadableRef = useRef(false);
-  const spokenLineupRef = useRef<{ text: string; at: number }>({ text: "", at: 0 });
+  const spokenLineupRef = useRef<{ text: string; at: number; count: number | null }>({ text: "", at: 0, count: null });
   const voiceOnRef = useRef(true);
 
   const holdConfig: HoldConfig = { ...DEFAULT_HOLD_CONFIG, ...config.hold };
@@ -257,6 +267,10 @@ export function HoldCoach({
   const isReps = config.mode === "reps";
   const targetSec = Math.round(holdConfig.minHoldMs / 1000);
   const holdCue = cues[0] ?? "Hold the position.";
+  // Posture is judged along the body's longer axis by assessSetup, so lying
+  // and standing share one spec; only the orientation differs per exercise.
+  const setupSpec: SetupSpec = { ...DEFAULT_SETUP, orientation: framing };
+  void posture;
 
   const [status, setStatusState] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -268,7 +282,9 @@ export function HoldCoach({
     partials: 0,
     message: config.setupHint,
     tone: "neutral",
-    framing: null,
+    hint: "no-body",
+    count: null,
+    checks: [],
     lineupMs: 0,
   });
   const [sets, setSets] = useState<SetDetail[]>([]);
@@ -385,30 +401,38 @@ export function HoldCoach({
       // ---- line up ---------------------------------------------------------
       if (phase === "lineup") {
         sampleLuminance(video, now);
-        const result = assessFraming(landmarks, aspect, framing, posture, lumaRef.current.value);
-        if (result.ready || forceStartRef.current) {
-          lineupOkSinceRef.current ??= now;
-        } else {
-          lineupOkSinceRef.current = null;
-        }
-        if (
-          forceStartRef.current ||
-          (lineupOkSinceRef.current !== null && now - lineupOkSinceRef.current >= LINEUP_HOLD_MS)
-        ) {
-          if (voiceOnRef.current) VOICE.inPositionToStart();
+        // Ready → still for a moment → 3, 2, 1 → go. Any slip resets it.
+        const assessment = assessSetup(landmarks, { luma: lumaRef.current.value }, aspect, setupSpec);
+        const step = stepGate(gateRef.current, assessment, now);
+        gateRef.current = step.state;
+        if (step.go || forceStartRef.current) {
           setStatus("calibrating");
-        } else if (voiceOnRef.current && !result.ready) {
-          // Repeat an instruction at most every 6s, and say a new one at once.
+        } else if (voiceOnRef.current) {
           const last = spokenLineupRef.current;
-          if (last.text !== result.instruction ? now - last.at > 2500 : now - last.at > 6000) {
-            spokenLineupRef.current = { text: result.instruction, at: now };
-            VOICE.lineUp(result.instruction);
+          if (step.count !== null) {
+            if (step.count !== last.count) {
+              spokenLineupRef.current = { text: "", at: now, count: step.count };
+              VOICE.lineUp(String(step.count));
+            }
+          } else if (step.hint !== "ready") {
+            // A new instruction at once (after 2.5s), the same one every 6s.
+            const text = HINT_COPY[step.hint];
+            if (last.text !== text ? now - last.at > 2500 : now - last.at > 6000) {
+              spokenLineupRef.current = { text, at: now, count: null };
+              VOICE.lineUp(text);
+            }
           }
         }
-        drawFrame(canvas, video, landmarks, null, result.ready);
+        drawFrame(canvas, video, landmarks, null, assessment.ready);
         if (now - lastUiRef.current > UI_INTERVAL_MS) {
           lastUiRef.current = now;
-          setUi((u) => ({ ...u, framing: result, lineupMs: now - lineupStartRef.current }));
+          setUi((u) => ({
+            ...u,
+            hint: step.hint,
+            count: step.count,
+            checks: assessment.checks,
+            lineupMs: now - lineupStartRef.current,
+          }));
         }
         return;
       }
@@ -662,7 +686,7 @@ export function HoldCoach({
         <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
           <rect
             x="8" y="12" width="84" height="66" rx="5" fill="none"
-            stroke={ui.framing?.ready ? "#34D3A0" : "#fff"} strokeWidth="0.5" strokeDasharray="2.5 2" opacity="0.9"
+            stroke={ui.count !== null || ui.hint === "hold-still" ? "#34D3A0" : "#fff"} strokeWidth="0.5" strokeDasharray="2.5 2" opacity="0.9"
             vectorEffect="non-scaling-stroke"
             style={{ strokeWidth: 2 }}
           />
@@ -720,12 +744,22 @@ export function HoldCoach({
         {(status === "lineup" || status === "calibrating") && (
           <>
             <div className="mx-auto mt-4 rounded-full bg-white px-4 py-2.5 font-sans text-sm font-extrabold text-ink shadow-[0_8px_24px_rgba(0,0,0,.25)]">
-              {status === "calibrating" ? "Hold still…" : (ui.framing?.instruction ?? "Step into view")}
+              {status === "calibrating"
+                ? "Hold still…"
+                : ui.count !== null
+                  ? "Perfect, starting in…"
+                  : HINT_COPY[ui.hint]}
             </div>
-            <div className="flex-1" />
-            {ui.framing && (
+            <div className="flex flex-1 items-center justify-center">
+              {status === "lineup" && ui.count !== null && (
+                <span className="font-display text-8xl font-extrabold text-white drop-shadow-[0_4px_20px_rgba(0,0,0,.45)]" aria-live="assertive">
+                  {ui.count}
+                </span>
+              )}
+            </div>
+            {ui.checks.length > 0 && (
               <div className="grid grid-cols-2 gap-1.5">
-                {ui.framing.checks.map((c) => (
+                {ui.checks.map((c) => (
                   <Pill key={c.id} tone={c.ok ? "ok" : "warn"} className="justify-center py-1.5">
                     {c.ok ? "✓ " : ""}
                     {c.label}
@@ -759,7 +793,7 @@ export function HoldCoach({
                 </Pill>
                 {reference && showRef && (
                   <button type="button" onClick={() => setShowRef(false)} aria-label="Hide the reference clip" className="w-24">
-                    <ReferenceLoop clip={{ ...reference, watchFor: undefined }} className="aspect-[3/4] w-24 rounded-xl" />
+                    <ReferenceLoop clip={reference} compact className="aspect-[3/4] w-24 rounded-xl" />
                   </button>
                 )}
                 {reference && !showRef && (
