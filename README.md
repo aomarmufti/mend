@@ -34,9 +34,10 @@ Built from the "Mend App Flow" design. Screens, in journey order:
    / Cues only).
 6. **Exercise** (`/exercise/[slug]`): what you do, what to watch for, camera
    setup and calibration provenance, then start with or without the camera.
-7. **Coach: line up** (`/coach?exercise=…`): full-screen camera with framing
-   checks (head and hips, feet, side-on / facing, lighting) from
-   `src/components/coach/framing.ts`. Coaching starts by itself once lined up.
+7. **Coach: line up** (`/coach?exercise=…`): full-screen camera with distance,
+   framing (including centring), angle and light checks from
+   `src/components/coach/setupCheck.ts`, one spoken hint at a time. Once
+   lined up and still, a 3-2-1 countdown starts the coach.
 8. **Coach: live**: ring timer, set count, in-position pill, corrective hint
    from the signal, form scored per rep after each rep, and a set summary.
    Exercises without a camera check use a hold timer / rep counter instead.
@@ -83,7 +84,7 @@ Built from the "Mend App Flow" design. Screens, in journey order:
 npm test
 ```
 
-Pure logic only (rep and hold counting, form quality, framing, heel slide,
+Pure logic only (rep and hold counting, form quality, line-up, heel slide,
 calendar). The camera flow can be driven end to end in Chromium with a clip as
 the webcam: convert it with `ffmpeg -i clip.mp4 -r 15 -pix_fmt yuv420p clip.y4m`
 and launch with `--use-fake-device-for-media-stream
