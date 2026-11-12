@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import dynamic from "next/dynamic";
 import type { CatalogExercise } from "@/data/catalog";
 import { ManualCoach } from "@/components/coach/ManualCoach";
@@ -27,7 +28,10 @@ export function ExerciseRunner({
   exitHref?: string;
   sessionLabel?: string;
 }) {
-  if (camera && exercise.coach) {
+  // The coach can hand over to the timer when the camera can't be used
+  // (permission denied, no one detected), without losing the exercise.
+  const [useCamera, setUseCamera] = useState(camera);
+  if (useCamera && exercise.coach) {
     return (
       <HoldCoach
         config={exercise.coach}
@@ -39,6 +43,7 @@ export function ExerciseRunner({
         onExit={onExit}
         exitHref={exitHref}
         sessionLabel={sessionLabel}
+        onUseTimer={() => setUseCamera(false)}
       />
     );
   }

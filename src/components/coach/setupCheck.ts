@@ -19,21 +19,34 @@ export type Orientation = "side" | "front" | "any";
 
 export interface SetupSpec {
   orientation: Orientation;
-  /** Landmark indices that must be visible and inside the frame. */
-  required: number[];
+  /**
+   * Left/right landmark pairs that must be visible and inside the frame.
+   * Side-on, the far limb is hidden behind the near one and the model
+   * reports it at low visibility, so one of each pair is enough; front-on
+   * both must be read.
+   */
+  required: [number, number][];
   /** Allowed body extent as a fraction of the frame's longer axis. */
   minExtent: number;
   maxExtent: number;
 }
 
 /** Shoulders, hips, knees, ankles: what every coached exercise reads. */
-export const DEFAULT_REQUIRED = [11, 12, 23, 24, 25, 26, 27, 28];
+export const DEFAULT_REQUIRED: [number, number][] = [
+  [11, 12],
+  [23, 24],
+  [25, 26],
+  [27, 28],
+];
 
 export const DEFAULT_SETUP: SetupSpec = {
   orientation: "any",
   required: DEFAULT_REQUIRED,
-  minExtent: 0.5,
-  maxExtent: 0.88,
+  // The filmed reference clips put the body at about 0.45 of the frame, and
+  // the coach scores them fine; 0.5 asked real users to come closer until
+  // their feet fell out of frame, then to step back again.
+  minExtent: 0.38,
+  maxExtent: 0.92,
 };
 
 export type HintId =
@@ -121,8 +134,16 @@ export function assessSetup(
     return mk("no-body", { light: lightOk });
   }
 
-  // Required joints must be readable AND inside the frame.
-  const req = spec.required.map((i) => landmarks[i]);
+  // Required joints must be readable AND inside the frame. Side-on, the
+  // better-seen joint of each pair stands for the pair.
+  const eitherSide = spec.orientation === "side";
+  const req = spec.required.flatMap(([a, b]) => {
+    const pa = landmarks[a], pb = landmarks[b];
+    if (!eitherSide) return [pa, pb];
+    if (!pa) return [pb];
+    if (!pb) return [pa];
+    return [vis(pa) >= vis(pb) ? pa : pb];
+  });
   const readable = req.every((p) => p && vis(p) >= VIS);
   const inFrame = req.every(
     (p) => p && p.x > EDGE && p.x < 1 - EDGE && p.y > EDGE && p.y < 1 - EDGE,
@@ -193,6 +214,8 @@ export interface GateState {
   lastCentre: { x: number; y: number } | null;
   lastAt: number | null;
   lastMovingAt: number;
+  /** First frame of the current run of not-ready frames, or null. */
+  notReadySince: number | null;
 }
 
 export const initialGate: GateState = {
@@ -202,11 +225,18 @@ export const initialGate: GateState = {
   lastCentre: null,
   lastAt: null,
   lastMovingAt: 0,
+  notReadySince: null,
 };
 
 /** How long the user must be ready and still before the countdown starts. */
 export const STEADY_MS = 600;
 export const COUNT_STEP_MS = 1000;
+/**
+ * A run of not-ready frames shorter than this is a tracking blip (a joint's
+ * visibility dipping under 0.5 for a frame), not the user leaving position,
+ * so it does not reset the countdown.
+ */
+export const GRACE_MS = 500;
 /** Centre speed (fraction of frame per second) above which they are "moving". */
 const MOVING_SPEED = 0.2;
 
@@ -227,13 +257,25 @@ export function stepGate(prev: GateState, a: SetupAssessment, now: number): Gate
     const speed = Math.hypot(a.centre.x - prev.lastCentre.x, a.centre.y - prev.lastCentre.y) / dt;
     if (speed > MOVING_SPEED) lastMovingAt = now;
   }
-  const base = { ...prev, lastCentre: a.centre, lastAt: now, lastMovingAt };
+  const base = { ...prev, lastCentre: a.centre, lastAt: now, lastMovingAt, notReadySince: null };
 
   if (prev.phase === "go") return { state: { ...base, phase: "go" }, hint: "ready", count: null, go: true };
 
   if (!a.ready) {
+    const notReadySince = prev.notReadySince ?? now;
+    const settling = prev.phase === "steadying" || prev.phase === "countdown";
+    if (settling && now - notReadySince < GRACE_MS) {
+      const counting = prev.phase === "countdown" && prev.countdownStart !== null;
+      const step = counting ? Math.floor((now - prev.countdownStart!) / COUNT_STEP_MS) : 0;
+      return {
+        state: { ...base, notReadySince },
+        hint: counting ? "ready" : "hold-still",
+        count: counting ? Math.max(1, 3 - step) : null,
+        go: false,
+      };
+    }
     return {
-      state: { ...base, phase: "aligning", readySince: null, countdownStart: null },
+      state: { ...base, phase: "aligning", readySince: null, countdownStart: null, notReadySince },
       hint: a.hint,
       count: null,
       go: false,
