@@ -55,9 +55,18 @@ const MODEL_URL = "/mediapipe/models/pose_landmarker_lite.task";
 
 const CALIBRATION_FRAMES = 30;
 const UI_INTERVAL_MS = 100;
-/** How long the line-up checks must all pass before coaching starts. */
 /** After this long, offer to start without a perfect line-up. */
 const LINEUP_ESCAPE_MS = 8_000;
+/** No person found for this long: explain setup instead of repeating "Step into view". */
+const NO_BODY_HELP_MS = 5_000;
+/**
+ * The GPU delegate can load and then return nothing, or throw on every
+ * frame, on some phones (iOS Safari's WebGL in particular). If the GPU model
+ * has found no one in this many frames, or failed this many in a row, the
+ * coach rebuilds it on the CPU once.
+ */
+const GPU_EMPTY_FRAMES = 45;
+const GPU_ERROR_FRAMES = 8;
 
 export type { HoldSignal };
 
@@ -162,20 +171,28 @@ export interface CoachResult {
   durationMs: number;
 }
 
+type Vision = Awaited<ReturnType<typeof import("@mediapipe/tasks-vision").FilesetResolver.forVisionTasks>>;
+type PoseLandmarkerClass = typeof import("@mediapipe/tasks-vision").PoseLandmarker;
+type Delegate = "GPU" | "CPU";
+
 async function createLandmarker(
-  vision: Awaited<ReturnType<typeof import("@mediapipe/tasks-vision").FilesetResolver.forVisionTasks>>,
-  PoseLandmarker: typeof import("@mediapipe/tasks-vision").PoseLandmarker,
-): Promise<PoseLandmarkerType> {
-  const options = (delegate: "GPU" | "CPU") => ({
+  vision: Vision,
+  PoseLandmarker: PoseLandmarkerClass,
+  prefer: Delegate = "GPU",
+): Promise<{ landmarker: PoseLandmarkerType; delegate: Delegate }> {
+  const options = (delegate: Delegate) => ({
     baseOptions: { modelAssetPath: MODEL_URL, delegate },
     runningMode: "VIDEO" as const,
     numPoses: 1,
   });
-  try {
-    return await PoseLandmarker.createFromOptions(vision, options("GPU"));
-  } catch {
-    return await PoseLandmarker.createFromOptions(vision, options("CPU"));
+  if (prefer === "GPU") {
+    try {
+      return { landmarker: await PoseLandmarker.createFromOptions(vision, options("GPU")), delegate: "GPU" };
+    } catch (err) {
+      console.warn("[coach] GPU pose model failed to load, using CPU", err);
+    }
   }
+  return { landmarker: await PoseLandmarker.createFromOptions(vision, options("CPU")), delegate: "CPU" };
 }
 
 export interface HoldCoachProps {
@@ -193,6 +210,8 @@ export interface HoldCoachProps {
   exitHref?: string;
   /** Session progress, e.g. "2 of 3", shown in the header. */
   sessionLabel?: string;
+  /** Switch this exercise to the timer when the camera can't be used. */
+  onUseTimer?: () => void;
 }
 
 type Status =
@@ -223,6 +242,7 @@ export function HoldCoach({
   onExit,
   exitHref = "/plan",
   sessionLabel,
+  onUseTimer,
 }: HoldCoachProps) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -261,6 +281,13 @@ export function HoldCoach({
   const spokenUnreadableRef = useRef(false);
   const spokenLineupRef = useRef<{ text: string; at: number; count: number | null }>({ text: "", at: 0, count: null });
   const voiceOnRef = useRef(true);
+  // Detection health, for the GPU -> CPU fallback and the "can't see you" help.
+  const delegateRef = useRef<Delegate>("GPU");
+  const rebuildingRef = useRef(false);
+  const framesRef = useRef(0);
+  const hitsRef = useRef(0);
+  const errorRunRef = useRef(0);
+  const lastSeenRef = useRef(0);
 
   const holdConfig: HoldConfig = { ...DEFAULT_HOLD_CONFIG, ...config.hold };
   const repConfig: RepConfig = { ...DEFAULT_REP_CONFIG, ...config.rep };
@@ -289,6 +316,9 @@ export function HoldCoach({
   });
   const [sets, setSets] = useState<SetDetail[]>([]);
   const [voiceOn, setVoiceOn] = useState(true);
+  const [needsTap, setNeedsTap] = useState(false);
+  const [noBodyHelp, setNoBodyHelp] = useState(false);
+  const [bodySeen, setBodySeen] = useState(false);
   const [showRef, setShowRef] = useState(true);
 
   const setStatus = (s: Status) => {
@@ -299,6 +329,32 @@ export function HoldCoach({
   useEffect(() => {
     let cancelled = false;
     let stream: MediaStream | null = null;
+    let visionRef: { vision: Vision; PoseLandmarker: PoseLandmarkerClass } | null = null;
+
+    /** Rebuild the model on the CPU, once, when the GPU one is not producing. */
+    async function fallBackToCpu(reason: string) {
+      if (rebuildingRef.current || delegateRef.current === "CPU" || !visionRef) return;
+      rebuildingRef.current = true;
+      console.warn(`[coach] ${reason}; rebuilding the pose model on the CPU`);
+      try {
+        const { landmarker } = await createLandmarker(visionRef.vision, visionRef.PoseLandmarker, "CPU");
+        if (cancelled) {
+          landmarker.close();
+          return;
+        }
+        landmarkerRef.current?.close();
+        landmarkerRef.current = landmarker;
+        delegateRef.current = "CPU";
+        framesRef.current = 0;
+        hitsRef.current = 0;
+        errorRunRef.current = 0;
+        lastVideoTimeRef.current = -1;
+      } catch (err) {
+        console.error("[coach] CPU pose model failed too", err);
+      } finally {
+        rebuildingRef.current = false;
+      }
+    }
 
     async function start() {
       setStatus("requesting");
@@ -319,18 +375,25 @@ export function HoldCoach({
       const video = videoRef.current;
       if (!video) return;
       video.srcObject = stream;
-      await video.play().catch(() => {});
+      // Autoplay can be refused (Low Power Mode on iOS, some in-app browsers).
+      // The model would then be reading a frozen frame, so ask for a tap.
+      await video.play().catch((err) => {
+        console.warn("[coach] video.play() refused", err);
+        if (!cancelled) setNeedsTap(true);
+      });
 
       setStatus("loading-model");
       try {
         const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
         const vision = await FilesetResolver.forVisionTasks(WASM_BASE_URL);
-        const landmarker = await createLandmarker(vision, PoseLandmarker);
+        visionRef = { vision, PoseLandmarker };
+        const { landmarker, delegate } = await createLandmarker(vision, PoseLandmarker);
         if (cancelled) {
           landmarker.close();
           return;
         }
         landmarkerRef.current = landmarker;
+        delegateRef.current = delegate;
       } catch (err) {
         if (cancelled) return;
         console.error(err);
@@ -383,14 +446,28 @@ export function HoldCoach({
       const now = performance.now();
       let landmarks: NormalizedLandmark[] | null = null;
 
+      if (rebuildingRef.current) return;
       if (video.currentTime !== lastVideoTimeRef.current) {
         lastVideoTimeRef.current = video.currentTime;
+        framesRef.current += 1;
         try {
           const result = landmarker.detectForVideo(video, now);
           landmarks = result.landmarks[0] ?? null;
           lastLandmarksRef.current = landmarks;
-        } catch {
-          /* a dropped frame is not worth tearing the loop down for */
+          errorRunRef.current = 0;
+          if (landmarks) {
+            hitsRef.current += 1;
+            lastSeenRef.current = now;
+          }
+        } catch (err) {
+          // One dropped frame is not worth tearing the loop down for, but a
+          // run of them means this delegate does not work on this device.
+          errorRunRef.current += 1;
+          if (errorRunRef.current === 1) console.warn("[coach] pose detection failed on a frame", err);
+          if (errorRunRef.current >= GPU_ERROR_FRAMES) void fallBackToCpu("pose detection keeps failing on the GPU");
+        }
+        if (delegateRef.current === "GPU" && hitsRef.current === 0 && framesRef.current >= GPU_EMPTY_FRAMES) {
+          void fallBackToCpu(`GPU pose model found no one in ${framesRef.current} frames`);
         }
       } else {
         landmarks = lastLandmarksRef.current;
@@ -426,6 +503,9 @@ export function HoldCoach({
         drawFrame(canvas, video, landmarks, null, assessment.ready);
         if (now - lastUiRef.current > UI_INTERVAL_MS) {
           lastUiRef.current = now;
+          const since = Math.max(lastSeenRef.current, lineupStartRef.current);
+          setNoBodyHelp(!landmarks && now - since > NO_BODY_HELP_MS);
+          if (landmarks) setBodySeen(true);
           setUi((u) => ({
             ...u,
             hint: step.hint,
@@ -682,16 +762,6 @@ export function HoldCoach({
         style={{ background: "linear-gradient(180deg,rgba(10,25,30,.6),rgba(10,25,30,0) 24%,rgba(10,25,30,0) 56%,rgba(10,25,30,.85))" }}
       />
 
-      {status === "lineup" && (
-        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          <rect
-            x="8" y="12" width="84" height="66" rx="5" fill="none"
-            stroke={ui.count !== null || ui.hint === "hold-still" ? "#34D3A0" : "#fff"} strokeWidth="0.5" strokeDasharray="2.5 2" opacity="0.9"
-            vectorEffect="non-scaling-stroke"
-            style={{ strokeWidth: 2 }}
-          />
-        </svg>
-      )}
 
       <div className="relative mx-auto flex h-full max-w-md flex-col px-4 pt-[calc(0.9rem+env(safe-area-inset-top))] pb-[calc(1rem+env(safe-area-inset-bottom))]">
         <div className="flex items-center justify-between gap-2">
@@ -735,7 +805,12 @@ export function HoldCoach({
         {status === "error" && (
           <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
             <p className="font-sans text-base font-bold">{error}</p>
-            <button type="button" onClick={exit} className={`${btnPrimary} mt-6`}>
+            {onUseTimer && (
+              <button type="button" onClick={() => { stopSpeaking(); onUseTimer(); }} className={`${btnPrimary} mt-6`}>
+                Use the timer instead
+              </button>
+            )}
+            <button type="button" onClick={exit} className="mt-4 font-sans text-sm font-bold text-white/80 underline underline-offset-4">
               Go back
             </button>
           </div>
@@ -750,6 +825,16 @@ export function HoldCoach({
                   ? "Perfect, starting in…"
                   : HINT_COPY[ui.hint]}
             </div>
+            {status === "lineup" && noBodyHelp && ui.count === null && (
+              <div className="mx-auto mt-3 max-w-xs rounded-2xl bg-night/75 p-3.5 font-sans text-xs leading-relaxed text-white/90 backdrop-blur">
+                <p className="mb-1 font-bold text-white">We can&apos;t see you yet</p>
+                <ul className="list-disc space-y-0.5 pl-4">
+                  <li>Prop the phone up at about hip height, then walk back 2 to 3 metres.</li>
+                  <li>You should see your whole body on screen, head to feet.</li>
+                  <li>Turn a light on, and avoid standing in front of a bright window.</li>
+                </ul>
+              </div>
+            )}
             <div className="flex flex-1 items-center justify-center">
               {status === "lineup" && ui.count !== null && (
                 <span className="font-display text-8xl font-extrabold text-white drop-shadow-[0_4px_20px_rgba(0,0,0,.45)]" aria-live="assertive">
@@ -771,15 +856,33 @@ export function HoldCoach({
               {status === "calibrating" ? "Finding your resting position" : config.setupHint}
             </p>
             {status === "lineup" && ui.lineupMs > LINEUP_ESCAPE_MS && (
-              <button
-                type="button"
-                onClick={() => {
-                  forceStartRef.current = true;
-                }}
-                className="mt-2 font-sans text-xs font-bold text-white underline underline-offset-4"
-              >
-                Start anyway
-              </button>
+              <div className="mt-2 flex justify-center gap-5">
+                {/* Calibration needs a body to measure, so starting without
+                    one would hang on "Hold still". */}
+                {bodySeen && !noBodyHelp && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      forceStartRef.current = true;
+                    }}
+                    className="font-sans text-xs font-bold text-white underline underline-offset-4"
+                  >
+                    Start anyway
+                  </button>
+                )}
+                {onUseTimer && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopSpeaking();
+                      onUseTimer();
+                    }}
+                    className="font-sans text-xs font-bold text-white underline underline-offset-4"
+                  >
+                    Use the timer instead
+                  </button>
+                )}
+              </div>
             )}
           </>
         )}
@@ -832,6 +935,18 @@ export function HoldCoach({
               </button>
             </div>
           </>
+        )}
+
+        {needsTap && (status === "lineup" || status === "loading-model") && (
+          <button
+            type="button"
+            onClick={() => {
+              videoRef.current?.play().then(() => setNeedsTap(false)).catch(() => {});
+            }}
+            className={`${btnPrimary} absolute inset-x-6 top-1/2 -translate-y-1/2`}
+          >
+            Tap to start the camera
+          </button>
         )}
 
         {status === "done" && (

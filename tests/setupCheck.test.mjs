@@ -44,6 +44,21 @@ t('side-on when facing is required says face camera', () => {
   const spec = { ...DEFAULT_SETUP, orientation: 'front' };
   assert.equal(hint(figure({ sh: 0.015 }), lit, spec), 'face-camera');
 });
+t('side-on: the far leg hidden behind the near one is still ready', () => {
+  const spec = { ...DEFAULT_SETUP, orientation: 'side' };
+  const lm = figure(); lm[26].visibility = 0.3; lm[28].visibility = 0.35;
+  assert.equal(hint(lm, lit, spec), 'ready');
+});
+t('front-on: a hidden ankle still asks for the whole body', () => {
+  const spec = { ...DEFAULT_SETUP, orientation: 'front' };
+  const lm = figure({ sh: 0.18 }); lm[28].visibility = 0.3;
+  assert.equal(hint(lm, lit, spec), 'not-visible');
+});
+t('side-on: both feet cut off still says step back', () => {
+  const spec = { ...DEFAULT_SETUP, orientation: 'side' };
+  assert.equal(hint(figure({ h: 0.7, top: 0.4 }), lit, spec), 'step-back');
+});
+t('whole body at the reference clips\' framing (0.45 of frame) is ready', () => assert.equal(hint(figure({ h: 0.45 })), 'ready'));
 t('dark frame says more light', () => assert.equal(hint(figure(), { luma: 0.05 }), 'more-light'));
 t('unmeasured light is not held against the user', () => assert.equal(hint(figure(), { luma: null }), 'ready'));
 t('every hint has copy', () => { for (const k of ['no-body','step-back','come-closer','move-left','move-right','turn-side','more-light','hold-still','ready']) assert.ok(HINT_COPY[k]); });
@@ -62,7 +77,16 @@ t('gate: leaving position during the count cancels it', () => {
   let g = initialGate; let s = stepGate(g, ready, 0); g = s.state;
   s = stepGate(g, ready, 700); g = s.state; assert.equal(s.count, 3);
   const away = assessSetup(figure({ h: 0.3 }), lit, A);
-  s = stepGate(g, away, 1200); assert.equal(s.count, null); assert.equal(s.state.phase, 'aligning'); assert.equal(s.hint, 'come-closer');
+  s = stepGate(g, away, 1200); g = s.state; // within the grace window: still counting
+  s = stepGate(g, away, 1800); assert.equal(s.count, null); assert.equal(s.state.phase, 'aligning'); assert.equal(s.hint, 'come-closer');
+});
+t('gate: a one-frame tracking blip during the count does not cancel it', () => {
+  let g = initialGate; let s = stepGate(g, ready, 0); g = s.state;
+  s = stepGate(g, ready, 700); g = s.state; assert.equal(s.count, 3);
+  const blip = assessSetup(null, lit, A);
+  s = stepGate(g, blip, 750); g = s.state; assert.equal(s.count, 3); assert.equal(s.go, false);
+  s = stepGate(g, ready, 800); g = s.state; assert.equal(s.count, 3);
+  s = stepGate(g, ready, 3800); assert.equal(s.go, true);
 });
 t('gate: walking about during the count restarts steadying', () => {
   let g = initialGate; let s = stepGate(g, ready, 0); g = s.state;
