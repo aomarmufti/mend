@@ -19,7 +19,7 @@ You need a Mac with Xcode (free, Mac App Store) and a cable.
 
 1. `npm install`
 2. `REKNIT_APP_URL=https://your-live-site npm run ios:open` (opens Xcode).
-   The URL must open without a login. A Vercel preview URL may ask for a Vercel
+   The URL must open without a login. A preview URL may ask for a
    login inside the app, so use the production domain.
 3. In Xcode: Settings > Accounts > add your Apple ID. Click the **App** project >
    Signing & Capabilities > Team: your name (Personal Team). If it says the

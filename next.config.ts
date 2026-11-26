@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Self-contained server output, so the app runs from a plain Docker image on any host.
+  output: "standalone",
   async headers() {
     // The service worker must never be cached, or a bad one could stick.
     return [{ source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }] }];
