@@ -21,6 +21,33 @@ function deleteAll() {
   }
 }
 
+function downloadData() {
+  const out: Record<string, unknown> = {};
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && k.startsWith(KEYS_PREFIX)) {
+        const raw = window.localStorage.getItem(k) ?? "";
+        try {
+          out[k] = JSON.parse(raw);
+        } catch {
+          out[k] = raw;
+        }
+      }
+    }
+  } catch {
+    /* storage unavailable */
+  }
+  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), data: out }, null, 2)], {
+    type: "application/json",
+  });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "reknit-my-data.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 function Toggle({ label, hint, on, onChange }: { label: string; hint?: string; on: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
@@ -92,12 +119,24 @@ export default function SettingsPage() {
           Everything stays on this device. The camera is never recorded.
           {consent && ` You agreed to health data use on ${new Date(consent.at).toLocaleDateString("en-GB")}.`}
         </p>
-        <Link href="/privacy" className="mt-3 inline-block text-sm font-bold underline">
-          Read the privacy policy
+        <p className="mt-3 text-sm">
+          <Link href="/privacy" className="font-bold underline">
+            Privacy policy
+          </Link>
+          {" · "}
+          <Link href="/terms" className="font-bold underline">
+            Terms of use
+          </Link>
+        </p>
+        <button type="button" className={`${btnSecondary} mt-4 w-full`} onClick={downloadData}>
+          Download my data
+        </button>
+        <Link href="/report" className={`${btnSecondary} mt-2.5 block w-full text-center`}>
+          Progress report for a clinician
         </Link>
         <button
           type="button"
-          className={`${btnSecondary} mt-4 w-full`}
+          className={`${btnSecondary} mt-2.5 w-full`}
           onClick={() => wipe("Withdraw consent? Reknit will stop using your health data and delete everything stored on this device.")}
         >
           Withdraw consent

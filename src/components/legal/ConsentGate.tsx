@@ -8,7 +8,7 @@ import { giveConsent, hasCurrentConsent, useConsent } from "@/lib/consent";
 import { signOut, useHydrated, useProfile } from "@/lib/profile";
 
 /** Pages that never touch health data, so they stay open without consent. */
-const OPEN = ["/welcome", "/privacy", "/brand", "/camera-check", "/landing", "/settings"];
+const OPEN = ["/welcome", "/privacy", "/terms", "/report", "/brand", "/camera-check", "/landing", "/settings"];
 
 /**
  * Asks for explicit consent to process health data before anyone gets as far
@@ -40,9 +40,20 @@ export function ConsentGate({ children }: { children: React.ReactNode }) {
         <li>Your camera is used live to check your form. It is never recorded or stored.</li>
         <li>You can withdraw consent or delete everything at any time in Settings.</li>
       </ul>
-      <Link href="/privacy" className="mt-4 text-sm font-bold underline underline-offset-4">
-        Read the privacy policy
-      </Link>
+      <p className="mt-4 rounded-2xl bg-white/10 p-3.5 text-xs leading-relaxed text-white/85">
+        Reknit supports general exercise and is not a medical device or a substitute for medical advice. It can&apos;t
+        diagnose you. Stop if anything hurts more than expected, and speak to a clinician if pain is severe, sudden or
+        getting worse.
+      </p>
+      <p className="mt-4 text-sm">
+        <Link href="/privacy" className="font-bold underline underline-offset-4">
+          Privacy policy
+        </Link>
+        {" · "}
+        <Link href="/terms" className="font-bold underline underline-offset-4">
+          Terms of use
+        </Link>
+      </p>
       <div className="flex-1" />
       <button type="button" onClick={giveConsent} className={`${btnPrimary} w-full`}>
         I agree to Reknit using my health data

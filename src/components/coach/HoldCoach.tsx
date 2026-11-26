@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import type {
   NormalizedLandmark,
@@ -436,6 +436,12 @@ export function HoldCoach({
   // Set only when detection is failing outright, as opposed to finding no one.
   const [trackerError, setTrackerError] = useState("");
   const [diag, setDiag] = useState("");
+  // Diagnostics are for us, not users: shown only with ?debug in the address.
+  const debug = useSyncExternalStore(
+    () => () => {},
+    () => new URLSearchParams(window.location.search).has("debug"),
+    () => false,
+  );
   const [showRef, setShowRef] = useState(true);
 
   const setStatus = (s: Status) => {
@@ -1213,7 +1219,7 @@ export function HoldCoach({
                 <p className="mt-0.5">
                   Set the camera at about hip height and step back until your whole body is on screen, in good light.
                 </p>
-                <p className="mt-1.5 font-mono text-[10px] text-white/55">{diag}</p>
+                {debug && <p className="mt-1.5 font-mono text-[10px] text-white/55">{diag}</p>}
                 <a href="/camera-check" className="mt-1.5 inline-block font-bold text-mint underline underline-offset-2">
                   Still nothing? Run a camera check
                 </a>

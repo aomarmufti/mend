@@ -8,6 +8,8 @@ import { PainCheckIn } from "@/components/today/PainCheckIn";
 import { areaLowerLabel, sessionMinutes } from "@/data/catalog";
 import { entitlement, reminderLabel, trialDaysLeft, useProfile } from "@/lib/profile";
 import { useActivePlan } from "@/lib/usePlan";
+import { setStage } from "@/lib/profile";
+import { suggestStage } from "@/lib/safety";
 import {
   daysSinceTrained,
   doneToday,
@@ -19,6 +21,7 @@ import {
   useCompletedDates,
   weekStrip,
 } from "@/lib/progress";
+import { localDateKey } from "@/lib/exerciseLog";
 
 const WEEKDAY = new Intl.DateTimeFormat("en-GB", { weekday: "long" });
 
@@ -38,6 +41,12 @@ export function TodayScreen() {
   const { count: streak, protectedDay } = streakDetail(days);
   const away = daysSinceTrained(days);
   const change = painChange(pain);
+  const trainedLast14 = Array.from({ length: 14 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    return localDateKey(d);
+  }).filter((k) => days.has(k)).length;
+  const suggestion = active.shape.staged ? suggestStage({ stage: active.plan.stage, pain, trainedLast14 }) : null;
   const done = doneToday(records);
   const usable = active.usable;
   const remaining = usable.filter((e) => !done.has(e.slug));
@@ -64,6 +73,22 @@ export function TodayScreen() {
           {streak > 0 ? `${streak} day streak${protectedDay ? " · rest day kept" : ""}` : "Start a streak"}
         </Pill>
       </div>
+
+      {suggestion && (
+        <Card className="bg-white p-4">
+          <p className="font-sans text-sm font-extrabold">
+            {suggestion.kind === "step-back" ? `Go back to the ${suggestion.to} stage?` : `Ready for the ${suggestion.to} stage?`}
+          </p>
+          <p className="mt-1 font-sans text-xs text-ink/65">{suggestion.reason}</p>
+          <button
+            type="button"
+            onClick={() => setStage(active.plan.conditionSlug, suggestion.to)}
+            className={`${btnSecondary} mt-3 py-2 text-xs`}
+          >
+            {suggestion.kind === "step-back" ? "Step back a stage" : "Move up a stage"}
+          </button>
+        </Card>
+      )}
 
       {away !== null && away >= 2 && (
         <Card className="bg-white p-4">
