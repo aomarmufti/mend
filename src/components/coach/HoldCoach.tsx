@@ -67,6 +67,16 @@ const NO_BODY_HELP_MS = 5_000;
  */
 const GPU_EMPTY_FRAMES = 45;
 const GPU_ERROR_FRAMES = 8;
+const CPU_ERROR_FRAMES = 30;
+/**
+ * A GPU model that works but is slow is worse than the CPU one: on an Intel
+ * Mac in Safari the GPU took seconds per frame where the CPU took ~120 ms.
+ * After a short warm-up, if the median GPU detection is slower than this,
+ * switch to the CPU once.
+ */
+const GPU_WARMUP_FRAMES = 5;
+const GPU_SLOW_SAMPLES = 10;
+const GPU_SLOW_MS = 150;
 /**
  * Frames go to the model through a 2D canvas, not the <video> element.
  * Uploading a camera-backed <video> straight into WebGL yields blank frames
@@ -195,6 +205,12 @@ async function createLandmarker(
     baseOptions: { modelAssetPath: MODEL_URL, delegate },
     runningMode: "VIDEO" as const,
     numPoses: 1,
+    // MediaPipe needs a WebGL context even on the CPU delegate (it uploads
+    // each frame as a texture). Left to itself, on Safari 17+ it makes one on
+    // an OffscreenCanvas, which fails on some Macs: the GPU model won't load
+    // ("kGpuService") and the CPU one throws on every frame ("GLctx"). A
+    // fresh, ordinary canvas works everywhere we've seen.
+    canvas: document.createElement("canvas"),
   });
   if (prefer === "GPU") {
     try {
@@ -301,6 +317,7 @@ export function HoldCoach({
   const lastSeenRef = useRef(0);
   const frameCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastDetectAtRef = useRef(0);
+  const detectMsRef = useRef<number[]>([]);
 
   const holdConfig: HoldConfig = { ...DEFAULT_HOLD_CONFIG, ...config.hold };
   const repConfig: RepConfig = { ...DEFAULT_REP_CONFIG, ...config.rep };
@@ -331,6 +348,7 @@ export function HoldCoach({
   const [voiceOn, setVoiceOn] = useState(true);
   const [needsTap, setNeedsTap] = useState(false);
   const [noBodyHelp, setNoBodyHelp] = useState(false);
+  const [helpDismissed, setHelpDismissed] = useState(false);
   const [bodySeen, setBodySeen] = useState(false);
   const [diag, setDiag] = useState("");
   const [showRef, setShowRef] = useState(true);
@@ -361,6 +379,7 @@ export function HoldCoach({
         delegateRef.current = "CPU";
         framesRef.current = 0;
         hitsRef.current = 0;
+        detectMsRef.current = [];
         errorRunRef.current = 0;
         lastVideoTimeRef.current = -1;
       } catch (err) {
@@ -476,7 +495,17 @@ export function HoldCoach({
             fc.height = fh;
           }
           fc.getContext("2d")?.drawImage(video, 0, 0, fw, fh);
+          const t0 = performance.now();
           const result = landmarker.detectForVideo(fc, now);
+          if (delegateRef.current === "GPU" && framesRef.current > GPU_WARMUP_FRAMES) {
+            const ms = detectMsRef.current;
+            ms.push(performance.now() - t0);
+            if (ms.length >= GPU_SLOW_SAMPLES) {
+              const median = [...ms].sort((a, b) => a - b)[Math.floor(ms.length / 2)];
+              detectMsRef.current = [];
+              if (median > GPU_SLOW_MS) void fallBackToCpu(`GPU pose model is slow (${Math.round(median)} ms a frame)`);
+            }
+          }
           landmarks = result.landmarks[0] ?? null;
           lastLandmarksRef.current = landmarks;
           errorRunRef.current = 0;
@@ -490,6 +519,14 @@ export function HoldCoach({
           errorRunRef.current += 1;
           if (errorRunRef.current === 1) console.warn("[coach] pose detection failed on a frame", err);
           if (errorRunRef.current >= GPU_ERROR_FRAMES) void fallBackToCpu("pose detection keeps failing on the GPU");
+          // Failing on the CPU too: this browser can't run the model. Say so,
+          // rather than asking someone in plain view to step into it.
+          if (delegateRef.current === "CPU" && errorRunRef.current >= CPU_ERROR_FRAMES && statusRef.current === "lineup") {
+            console.error("[coach] pose detection fails on the CPU too", err);
+            setError("The camera coach can't run in this browser. Try Chrome, or do this one with the timer.");
+            setStatus("error");
+            return;
+          }
         }
         if (delegateRef.current === "GPU" && hitsRef.current === 0 && framesRef.current >= GPU_EMPTY_FRAMES) {
           void fallBackToCpu(`GPU pose model found no one in ${framesRef.current} frames`);
@@ -853,17 +890,6 @@ export function HoldCoach({
                   ? "Perfect, starting in…"
                   : HINT_COPY[ui.hint]}
             </div>
-            {status === "lineup" && noBodyHelp && ui.count === null && (
-              <div className="mx-auto mt-3 max-w-xs rounded-2xl bg-night/75 p-3.5 font-sans text-xs leading-relaxed text-white/90 backdrop-blur">
-                <p className="mb-1 font-bold text-white">We can&apos;t see you yet</p>
-                <ul className="list-disc space-y-0.5 pl-4">
-                  <li>Set your phone or laptop at about hip height, then walk back 2 to 3 metres.</li>
-                  <li>You should see your whole body on screen, head to feet.</li>
-                  <li>Turn a light on, and avoid standing in front of a bright window.</li>
-                </ul>
-                <p className="mt-2 font-mono text-[10px] text-white/50">{diag}</p>
-              </div>
-            )}
             <div className="flex flex-1 items-center justify-center">
               {status === "lineup" && ui.count !== null && (
                 <span className="font-display text-8xl font-extrabold text-white drop-shadow-[0_4px_20px_rgba(0,0,0,.45)]" aria-live="assertive">
@@ -871,6 +897,28 @@ export function HoldCoach({
                 </span>
               )}
             </div>
+            {/* Sits at the bottom, above the checks, so it never covers the
+                person it is trying to find. */}
+            {status === "lineup" && noBodyHelp && !helpDismissed && ui.count === null && (
+              <div className="relative mb-2 rounded-2xl bg-night/80 p-3 pr-8 font-sans text-[11px] leading-relaxed text-white/90 backdrop-blur">
+                <button
+                  type="button"
+                  onClick={() => setHelpDismissed(true)}
+                  aria-label="Hide these tips"
+                  className="absolute top-1.5 right-2 h-6 w-6 rounded-full text-sm text-white/70"
+                >
+                  ×
+                </button>
+                <p className="font-bold text-white">We can&apos;t see you yet</p>
+                <p className="mt-0.5">
+                  Set the camera at about hip height and step back until your whole body is on screen, in good light.
+                </p>
+                <p className="mt-1.5 font-mono text-[10px] text-white/55">{diag}</p>
+                <a href="/camera-check" className="mt-1.5 inline-block font-bold text-mint underline underline-offset-2">
+                  Still nothing? Run a camera check
+                </a>
+              </div>
+            )}
             {ui.checks.length > 0 && (
               <div className="grid grid-cols-2 gap-1.5">
                 {ui.checks.map((c) => (
