@@ -43,6 +43,7 @@ export type Framing = "side" | "front";
 export type Posture = "standing" | "lying";
 import { ReferenceLoop, type ReferenceClip } from "@/components/coach/ReferenceLoop";
 import { ExerciseDemo } from "@/components/coach/ExerciseDemo";
+import type { MoveNetDetector } from "@/components/coach/movenet";
 import { getDemo } from "@/components/coach/exerciseDemos";
 import { logExercise, type SetDetail } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
@@ -347,6 +348,11 @@ export function HoldCoach({
   const delegateRef = useRef<Delegate>("GPU");
   const modeRef = useRef<DetectMode>("VIDEO");
   const wasmRef = useRef<WasmBuild>("simd");
+  // Which tracker is live. MediaPipe is the default; MoveNet (TensorFlow.js)
+  // takes over on WebKit, and anywhere MediaPipe has run out of options.
+  const engineKindRef = useRef<"mediapipe" | "movenet">("mediapipe");
+  const moveNetRef = useRef<MoveNetDetector | null>(null);
+  const moveNetBusyRef = useRef(false);
   const flippedRef = useRef(false);
   const detectWidthRef = useRef(DETECT_MAX_WIDTH);
   const rebuildingRef = useRef(false);
@@ -453,11 +459,77 @@ export function HoldCoach({
       }
     }
 
+    /** Switch to the TensorFlow.js MoveNet tracker, closing MediaPipe first. */
+    async function startMoveNet(reason: string) {
+      if (rebuildingRef.current || engineKindRef.current === "movenet") return;
+      rebuildingRef.current = true;
+      console.warn(`[coach] ${reason}; switching to the MoveNet tracker`);
+      try {
+        const old = landmarkerRef.current;
+        landmarkerRef.current = null;
+        old?.close();
+        probeRef.current?.close();
+        probeRef.current = null;
+        const { createMoveNet, chooseVariant } = await import("@/components/coach/movenet");
+        const detector = await createMoveNet(chooseVariant(window.location.search));
+        if (cancelled) {
+          detector.close();
+          return;
+        }
+        moveNetRef.current = detector;
+        engineKindRef.current = "movenet";
+        lastLandmarksRef.current = null;
+        framesRef.current = 0;
+        hitsRef.current = 0;
+        errorRunRef.current = 0;
+        lastVideoTimeRef.current = -1;
+      } catch (err) {
+        console.error("[coach] MoveNet failed to start", err);
+        lastErrorRef.current = `movenet: ${err instanceof Error ? err.message : String(err)}`;
+        errorRunRef.current = 30;
+      } finally {
+        rebuildingRef.current = false;
+      }
+    }
+
+    /**
+     * Hand a frame to MoveNet. Its detection is asynchronous, so the loop keeps
+     * drawing with the latest result while one is in flight, and at most one is
+     * ever in flight.
+     */
+    function kickMoveNet(frame: HTMLCanvasElement) {
+      const detector = moveNetRef.current;
+      if (!detector || moveNetBusyRef.current) return;
+      moveNetBusyRef.current = true;
+      detector
+        .detect(frame)
+        .then((lm) => {
+          errorRunRef.current = 0;
+          lastLandmarksRef.current = lm;
+          if (lm) {
+            hitsRef.current += 1;
+            lastSeenRef.current = performance.now();
+          }
+        })
+        .catch((err) => {
+          errorRunRef.current += 1;
+          lastErrorRef.current = err instanceof Error ? err.message : String(err);
+          if (errorRunRef.current === 1) console.warn("[coach] MoveNet failed on a frame", err);
+        })
+        .finally(() => {
+          moveNetBusyRef.current = false;
+        });
+    }
+
     /** The detection keeps throwing: step down to the next engine, if there is one. */
     function recover() {
+      if (engineKindRef.current === "movenet") return;
       const current: Engine = { delegate: delegateRef.current, mode: modeRef.current, wasm: wasmRef.current };
       const next = nextEngine(current, flippedRef.current);
-      if (!next) return;
+      if (!next) {
+        void startMoveNet("MediaPipe has no engine left to try");
+        return;
+      }
       if (next.wasm !== current.wasm) flippedRef.current = true;
       void rebuild(next, `${current.delegate}/${current.mode}/${current.wasm} keeps failing`);
     }
@@ -521,35 +593,48 @@ export function HoldCoach({
 
       setStatus("loading-model");
       try {
-        const { PoseLandmarker } = await import("@mediapipe/tasks-vision");
-        visionRef = { PoseLandmarker };
-        // WebKit starts on the plain CPU model: one instance, the non-SIMD
-        // build, a smaller frame. The GPU path there has been seen returning
-        // nothing, and the SIMD build trapping in the allocator. URL switches
-        // (?delegate=cpu|gpu, ?wasm=simd|nosimd, ?mode=image) override this so
-        // a device can be tried each way without a rebuild.
         const params = new URLSearchParams(window.location.search);
         const webkit = isWebKit();
-        const engine: Engine = {
-          delegate: params.get("delegate") === "gpu" ? "GPU" : params.get("delegate") === "cpu" || webkit ? "CPU" : "GPU",
-          mode: params.get("mode") === "image" ? "IMAGE" : "VIDEO",
-          wasm: params.get("wasm") === "simd" ? "simd" : params.get("wasm") === "nosimd" || webkit ? "nosimd" : "simd",
-        };
-        detectWidthRef.current = webkit ? 480 : DETECT_MAX_WIDTH;
-        const { landmarker, delegate } = await createLandmarker(
-          filesetFor(engine.wasm),
-          PoseLandmarker,
-          engine.delegate,
-          engine.mode,
-        );
-        if (cancelled) {
-          landmarker.close();
-          return;
+        // WebKit (Safari, and every iPhone and iPad web view) goes straight to
+        // MoveNet: MediaPipe's WebAssembly build has been seen trapping in the
+        // allocator there, and skipping it also saves loading ~11 MB of wasm.
+        // ?engine=movenet|mediapipe overrides this to try a device each way.
+        const want = params.get("engine");
+        if (want === "movenet" || (webkit && want !== "mediapipe")) {
+          const { createMoveNet, chooseVariant } = await import("@/components/coach/movenet");
+          const detector = await createMoveNet(chooseVariant(window.location.search));
+          if (cancelled) {
+            detector.close();
+            return;
+          }
+          moveNetRef.current = detector;
+          engineKindRef.current = "movenet";
+        } else {
+          const { PoseLandmarker } = await import("@mediapipe/tasks-vision");
+          visionRef = { PoseLandmarker };
+          // Off WebKit, MediaPipe runs on the GPU model with the SIMD build, as
+          // before. URL switches (?delegate=cpu|gpu, ?wasm=simd|nosimd,
+          // ?mode=image) let a device be tried each way without a rebuild.
+          const engine: Engine = {
+            delegate: params.get("delegate") === "cpu" ? "CPU" : "GPU",
+            mode: params.get("mode") === "image" ? "IMAGE" : "VIDEO",
+            wasm: params.get("wasm") === "nosimd" ? "nosimd" : "simd",
+          };
+          const { landmarker, delegate } = await createLandmarker(
+            filesetFor(engine.wasm),
+            PoseLandmarker,
+            engine.delegate,
+            engine.mode,
+          );
+          if (cancelled) {
+            landmarker.close();
+            return;
+          }
+          landmarkerRef.current = landmarker;
+          delegateRef.current = delegate;
+          modeRef.current = engine.mode;
+          wasmRef.current = engine.wasm;
         }
-        landmarkerRef.current = landmarker;
-        delegateRef.current = delegate;
-        modeRef.current = engine.mode;
-        wasmRef.current = engine.wasm;
       } catch (err) {
         if (cancelled) return;
         console.error(err);
@@ -594,7 +679,8 @@ export function HoldCoach({
       const video = videoRef.current;
       const canvas = canvasRef.current;
       const landmarker = landmarkerRef.current;
-      if (!video || !canvas || !landmarker) return;
+      const useMoveNet = engineKindRef.current === "movenet";
+      if (!video || !canvas || (useMoveNet ? !moveNetRef.current : !landmarker)) return;
       if (video.readyState < 2 || !video.videoWidth) return;
       const phase = statusRef.current;
       if (phase === "done" || phase === "error") return;
@@ -618,9 +704,17 @@ export function HoldCoach({
             fc.height = fh;
           }
           fc.getContext("2d")?.drawImage(video, 0, 0, fw, fh);
-          if (simulateRef.current === "video-fails" && modeRef.current === "VIDEO") {
-            throw new Error("simulated detectForVideo failure");
+          if (
+            !useMoveNet &&
+            (simulateRef.current === "mediapipe-fails" ||
+              (simulateRef.current === "video-fails" && modeRef.current === "VIDEO"))
+          ) {
+            throw new Error("simulated MediaPipe failure");
           }
+          if (useMoveNet) {
+            kickMoveNet(fc);
+            landmarks = lastLandmarksRef.current;
+          } else if (landmarker) {
           // Whole, strictly increasing milliseconds: two frames can never share
           // a timestamp, whatever the clock or the frame pacing does.
           const ts = Math.max(Math.round(now), lastTsRef.current + 1);
@@ -633,6 +727,7 @@ export function HoldCoach({
             hitsRef.current += 1;
             lastSeenRef.current = now;
           }
+          }
         } catch (err) {
           // One dropped frame is not worth tearing the loop down for, but a
           // run of them means this delegate does not work on this device.
@@ -642,6 +737,7 @@ export function HoldCoach({
           if (errorRunRef.current >= GPU_ERROR_FRAMES) recover();
         }
         if (
+          engineKindRef.current === "mediapipe" &&
           delegateRef.current === "GPU" &&
           hitsRef.current === 0 &&
           framesRef.current >= GPU_EMPTY_FRAMES &&
@@ -686,7 +782,10 @@ export function HoldCoach({
           const since = Math.max(lastSeenRef.current, lineupStartRef.current);
           setNoBodyHelp(!landmarks && now - since > NO_BODY_HELP_MS);
           setDiag(
-            `${delegateRef.current}/${modeRef.current}/${wasmRef.current} · ${video.videoWidth}×${video.videoHeight} · frames ${framesRef.current} · found ${hitsRef.current} · errors ${errorRunRef.current}` +
+            (engineKindRef.current === "movenet"
+              ? `movenet/${moveNetRef.current?.backend ?? "?"}`
+              : `${delegateRef.current}/${modeRef.current}/${wasmRef.current}`) +
+              ` · ${video.videoWidth}×${video.videoHeight} · frames ${framesRef.current} · found ${hitsRef.current} · errors ${errorRunRef.current}` +
               (errorRunRef.current > 0 ? ` · ${lastErrorRef.current.slice(0, 120)}` : ""),
           );
           if (landmarks) {
@@ -891,6 +990,8 @@ export function HoldCoach({
       landmarkerRef.current = null;
       probeRef.current?.close();
       probeRef.current = null;
+      moveNetRef.current?.close();
+      moveNetRef.current = null;
       stream?.getTracks().forEach((t) => t.stop());
     };
     // config is provided by the parent and not expected to change identity
