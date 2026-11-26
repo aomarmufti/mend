@@ -67,8 +67,18 @@ const NO_BODY_HELP_MS = 5_000;
  * has found no one in this many frames, or failed this many in a row, the
  * coach rebuilds it on the CPU once.
  */
-const GPU_EMPTY_FRAMES = 45;
 const GPU_ERROR_FRAMES = 8;
+/**
+ * "Found no one" is not the same as "broken": someone walking back from the
+ * laptop is simply not in view yet, and rebuilding the model on the CPU after
+ * a second and a half of an empty room (as this once did) throws away the
+ * good GPU model and slows everything down. Instead, once the GPU model has
+ * seen no one for this many frames, a CPU model gets a second opinion on one
+ * frame every PROBE_EVERY frames. Only if the CPU sees a person the GPU is
+ * missing does the coach switch.
+ */
+const GPU_EMPTY_FRAMES = 90;
+const PROBE_EVERY = 60;
 /**
  * Frames go to the model through a 2D canvas, not the <video> element.
  * Uploading a camera-backed <video> straight into WebGL yields blank frames
@@ -187,15 +197,23 @@ export interface CoachResult {
 type Vision = Awaited<ReturnType<typeof import("@mediapipe/tasks-vision").FilesetResolver.forVisionTasks>>;
 type PoseLandmarkerClass = typeof import("@mediapipe/tasks-vision").PoseLandmarker;
 type Delegate = "GPU" | "CPU";
+/**
+ * VIDEO tracks across frames and needs strictly increasing timestamps. IMAGE
+ * judges each frame on its own, with no timestamp state, so it is the last
+ * resort when VIDEO keeps throwing: slower and less steady, but it cannot fail
+ * on the bookkeeping that VIDEO can.
+ */
+type DetectMode = "VIDEO" | "IMAGE";
 
 async function createLandmarker(
   vision: Vision,
   PoseLandmarker: PoseLandmarkerClass,
   prefer: Delegate = "GPU",
+  mode: DetectMode = "VIDEO",
 ): Promise<{ landmarker: PoseLandmarkerType; delegate: Delegate }> {
   const options = (delegate: Delegate) => ({
     baseOptions: { modelAssetPath: MODEL_URL, delegate },
-    runningMode: "VIDEO" as const,
+    runningMode: mode,
     numPoses: 1,
   });
   if (prefer === "GPU") {
@@ -296,7 +314,14 @@ export function HoldCoach({
   const voiceOnRef = useRef(true);
   // Detection health, for the GPU -> CPU fallback and the "can't see you" help.
   const delegateRef = useRef<Delegate>("GPU");
+  const modeRef = useRef<DetectMode>("VIDEO");
   const rebuildingRef = useRef(false);
+  const probeRef = useRef<PoseLandmarkerType | null>(null);
+  const probingRef = useRef(false);
+  const lastTsRef = useRef(0);
+  const lastErrorRef = useRef("");
+  const announcedRef = useRef(false);
+  const simulateRef = useRef("");
   const framesRef = useRef(0);
   const hitsRef = useRef(0);
   const errorRunRef = useRef(0);
@@ -334,6 +359,11 @@ export function HoldCoach({
   const [needsTap, setNeedsTap] = useState(false);
   const [noBodyHelp, setNoBodyHelp] = useState(false);
   const [bodySeen, setBodySeen] = useState(false);
+  // Brief confirmation the first time the body is read, so it is clear the
+  // system has found you before it starts asking you to move.
+  const [gotYou, setGotYou] = useState(false);
+  // Set only when detection is failing outright, as opposed to finding no one.
+  const [trackerError, setTrackerError] = useState("");
   const [diag, setDiag] = useState("");
   const [showRef, setShowRef] = useState(true);
 
@@ -347,32 +377,73 @@ export function HoldCoach({
     let stream: MediaStream | null = null;
     let visionRef: { vision: Vision; PoseLandmarker: PoseLandmarkerClass } | null = null;
 
-    /** Rebuild the model on the CPU, once, when the GPU one is not producing. */
-    async function fallBackToCpu(reason: string) {
-      if (rebuildingRef.current || delegateRef.current === "CPU" || !visionRef) return;
+    /**
+     * Rebuild the model on a different delegate or running mode. Used when the
+     * current one keeps throwing, or when the CPU has shown the GPU is blind.
+     */
+    async function rebuild(delegate: Delegate, mode: DetectMode, reason: string) {
+      if (rebuildingRef.current || !visionRef) return;
       rebuildingRef.current = true;
-      console.warn(`[coach] ${reason}; rebuilding the pose model on the CPU`);
+      console.warn(`[coach] ${reason}; rebuilding the pose model (${delegate}, ${mode})`);
       try {
-        const { landmarker } = await createLandmarker(visionRef.vision, visionRef.PoseLandmarker, "CPU");
+        const { landmarker } = await createLandmarker(visionRef.vision, visionRef.PoseLandmarker, delegate, mode);
         if (cancelled) {
           landmarker.close();
           return;
         }
         landmarkerRef.current?.close();
         landmarkerRef.current = landmarker;
-        delegateRef.current = "CPU";
+        delegateRef.current = delegate;
+        modeRef.current = mode;
         framesRef.current = 0;
         hitsRef.current = 0;
         errorRunRef.current = 0;
+        lastTsRef.current = 0;
         lastVideoTimeRef.current = -1;
       } catch (err) {
-        console.error("[coach] CPU pose model failed too", err);
+        console.error(`[coach] ${delegate}/${mode} pose model failed to build`, err);
+        lastErrorRef.current = `rebuild ${delegate}/${mode}: ${err instanceof Error ? err.message : String(err)}`;
       } finally {
         rebuildingRef.current = false;
       }
     }
 
+    /** The detection keeps throwing: GPU, then CPU, then frame-by-frame CPU. */
+    function recover() {
+      if (delegateRef.current === "GPU") void rebuild("CPU", modeRef.current, "pose detection keeps failing on the GPU");
+      else if (modeRef.current === "VIDEO") void rebuild("CPU", "IMAGE", "video-mode detection keeps failing on the CPU");
+    }
+
+    /**
+     * The GPU model has seen no one for a while. That usually just means no one
+     * is in view. Ask a CPU model about the current frame to find out which.
+     */
+    async function probeCpu() {
+      if (probingRef.current || rebuildingRef.current || !visionRef) return;
+      probingRef.current = true;
+      try {
+        if (!probeRef.current) {
+          probeRef.current = (
+            await createLandmarker(visionRef.vision, visionRef.PoseLandmarker, "CPU", "IMAGE")
+          ).landmarker;
+        }
+        const fc = frameCanvasRef.current;
+        if (cancelled || !fc) return;
+        const sees = probeRef.current.detect(fc).landmarks.length > 0;
+        if (sees && hitsRef.current === 0 && delegateRef.current === "GPU") {
+          await rebuild("CPU", "VIDEO", "the CPU model sees someone the GPU model does not");
+        }
+      } catch (err) {
+        console.warn("[coach] CPU probe failed", err);
+      } finally {
+        probingRef.current = false;
+      }
+    }
+
     async function start() {
+      // ?simulate=video-fails makes every video-mode detection throw, so the
+      // recovery path can be exercised without a device that breaks that way.
+      simulateRef.current = new URLSearchParams(window.location.search).get("simulate") ?? "";
       setStatus("requesting");
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -478,7 +549,14 @@ export function HoldCoach({
             fc.height = fh;
           }
           fc.getContext("2d")?.drawImage(video, 0, 0, fw, fh);
-          const result = landmarker.detectForVideo(fc, now);
+          if (simulateRef.current === "video-fails" && modeRef.current === "VIDEO") {
+            throw new Error("simulated detectForVideo failure");
+          }
+          // Whole, strictly increasing milliseconds: two frames can never share
+          // a timestamp, whatever the clock or the frame pacing does.
+          const ts = Math.max(Math.round(now), lastTsRef.current + 1);
+          lastTsRef.current = ts;
+          const result = modeRef.current === "IMAGE" ? landmarker.detect(fc) : landmarker.detectForVideo(fc, ts);
           landmarks = result.landmarks[0] ?? null;
           lastLandmarksRef.current = landmarks;
           errorRunRef.current = 0;
@@ -490,11 +568,17 @@ export function HoldCoach({
           // One dropped frame is not worth tearing the loop down for, but a
           // run of them means this delegate does not work on this device.
           errorRunRef.current += 1;
+          lastErrorRef.current = err instanceof Error ? err.message : String(err);
           if (errorRunRef.current === 1) console.warn("[coach] pose detection failed on a frame", err);
-          if (errorRunRef.current >= GPU_ERROR_FRAMES) void fallBackToCpu("pose detection keeps failing on the GPU");
+          if (errorRunRef.current >= GPU_ERROR_FRAMES) recover();
         }
-        if (delegateRef.current === "GPU" && hitsRef.current === 0 && framesRef.current >= GPU_EMPTY_FRAMES) {
-          void fallBackToCpu(`GPU pose model found no one in ${framesRef.current} frames`);
+        if (
+          delegateRef.current === "GPU" &&
+          hitsRef.current === 0 &&
+          framesRef.current >= GPU_EMPTY_FRAMES &&
+          framesRef.current % PROBE_EVERY === 0
+        ) {
+          void probeCpu();
         }
       } else {
         landmarks = lastLandmarksRef.current;
@@ -533,9 +617,19 @@ export function HoldCoach({
           const since = Math.max(lastSeenRef.current, lineupStartRef.current);
           setNoBodyHelp(!landmarks && now - since > NO_BODY_HELP_MS);
           setDiag(
-            `${delegateRef.current} · ${video.videoWidth}×${video.videoHeight} · frames ${framesRef.current} · found ${hitsRef.current} · errors ${errorRunRef.current}`,
+            `${delegateRef.current}/${modeRef.current} · ${video.videoWidth}×${video.videoHeight} · frames ${framesRef.current} · found ${hitsRef.current} · errors ${errorRunRef.current}` +
+              (errorRunRef.current > 0 ? ` · ${lastErrorRef.current.slice(0, 120)}` : ""),
           );
-          if (landmarks) setBodySeen(true);
+          if (landmarks) {
+            setBodySeen(true);
+            if (!announcedRef.current) {
+              announcedRef.current = true;
+              setGotYou(true);
+              setTimeout(() => setGotYou(false), 2200);
+              if (voiceOnRef.current) VOICE.lineUp("I can see you.");
+            }
+          }
+          setTrackerError(errorRunRef.current >= 30 ? lastErrorRef.current || "unknown error" : "");
           setUi((u) => ({
             ...u,
             hint: step.hint,
@@ -726,6 +820,8 @@ export function HoldCoach({
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       landmarkerRef.current?.close();
       landmarkerRef.current = null;
+      probeRef.current?.close();
+      probeRef.current = null;
       stream?.getTracks().forEach((t) => t.stop());
     };
     // config is provided by the parent and not expected to change identity
@@ -853,11 +949,18 @@ export function HoldCoach({
                 ? "Hold still…"
                 : ui.count !== null
                   ? "Perfect, starting in…"
-                  : HINT_COPY[ui.hint]}
+                  : gotYou
+                    ? "✓ I can see you"
+                    : HINT_COPY[ui.hint]}
             </div>
             {status === "lineup" && noBodyHelp && ui.count === null && (
               <div className="mx-auto mt-3 max-w-xs rounded-2xl bg-night/75 p-3.5 font-sans text-xs leading-relaxed text-white/90 backdrop-blur">
-                <p className="mb-1 font-bold text-white">We can&apos;t see you yet</p>
+                <p className="mb-1 font-bold text-white">
+                  {trackerError ? "The body tracker isn't responding on this device" : "We can't see you yet"}
+                </p>
+                {trackerError && (
+                  <p className="mb-1.5">Reload the page to try again, or use the timer for this exercise.</p>
+                )}
                 <ul className="list-disc space-y-0.5 pl-4">
                   <li>Set your phone or laptop at about hip height, then walk back 2 to 3 metres.</li>
                   <li>You should see your whole body on screen, head to feet.</li>

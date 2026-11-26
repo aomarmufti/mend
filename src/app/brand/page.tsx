@@ -11,7 +11,7 @@ const options = [
     key: "A",
     name: "Woven mark",
     file: "a-woven-mark-dark",
-    note: "The in-app logo on the dark green. The amber thread passes over the bottom arm and under the top one. Matches the app, so it is the safest pick.",
+    note: "The in-app logo on the dark green. The amber thread passes over the bottom arm and under the top one. Matches the app.",
     pick: true,
   },
   {
@@ -42,7 +42,7 @@ export default function BrandPage() {
       <p className="font-sans text-xs font-semibold tracking-wide text-moss uppercase">Brand</p>
       <h1 className="mt-1 font-display text-3xl">Reknit logo and App Store icon</h1>
       <p className="mt-2 max-w-xl font-sans text-sm text-ink/60">
-        The in-app logo, then four App Store icon options. Each 1024 px PNG is flat RGB with no
+        The in-app logo, then the four App Store icon options. Option A is chosen. Each 1024 px PNG is flat RGB with no
         transparency and square corners, which is what the App Store asks for. iOS rounds the
         corners itself.
       </p>
@@ -79,7 +79,7 @@ export default function BrandPage() {
                 <h2 className="font-display text-xl">{o.name}</h2>
                 {o.pick && (
                   <span className="rounded-full border border-amber px-2.5 py-0.5 font-sans text-xs font-bold text-amber">
-                    Recommended
+                    Chosen
                   </span>
                 )}
               </div>
