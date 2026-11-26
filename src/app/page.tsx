@@ -13,7 +13,15 @@ export default function RootPage() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace(homeFor(readProfile()));
+    const profile = readProfile();
+    const target = homeFor(profile);
+    // A first-time visitor in a web browser gets the landing page. The home-screen
+    // app and the iPhone app (standalone, or a native shell) go straight in.
+    const inApp =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (navigator as Navigator & { standalone?: boolean }).standalone === true ||
+      "Capacitor" in window;
+    router.replace(target === "/welcome" && !inApp ? "/landing" : target);
   }, [router]);
 
   return <div className="min-h-screen" />;

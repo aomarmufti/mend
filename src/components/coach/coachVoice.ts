@@ -13,6 +13,8 @@
  * AudioContext loses the audio channel and keeps the visual one.
  */
 
+import { readPrefs } from "@/lib/prefs";
+
 let ctx: AudioContext | null = null;
 
 function audio(): AudioContext | null {
@@ -35,6 +37,7 @@ function audio(): AudioContext | null {
 
 /** A short sine blip. Used to mark state changes the user should feel, not read. */
 export function tone(frequency: number, ms = 140, gain = 0.09) {
+  if (!readPrefs().sound) return;
   const c = audio();
   if (!c) return;
   try {
@@ -56,10 +59,12 @@ export function tone(frequency: number, ms = 140, gain = 0.09) {
 
 export function speak(text: string, { interrupt = true } = {}) {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  const prefs = readPrefs();
+  if (!prefs.voice) return;
   try {
     if (interrupt) window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1.0;
+    u.rate = prefs.voiceSpeed;
     u.pitch = 1.0;
     u.volume = 1.0;
     u.lang = "en-GB";
@@ -81,6 +86,7 @@ export function stopSpeaking() {
 /** Short buzz where the device supports it. Reaches a user who has the sound off. */
 export function buzz(pattern: number | number[]) {
   if (typeof navigator === "undefined" || !("vibrate" in navigator)) return;
+  if (!readPrefs().haptics) return;
   try {
     navigator.vibrate(pattern);
   } catch {

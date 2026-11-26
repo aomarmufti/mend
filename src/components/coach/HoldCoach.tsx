@@ -48,6 +48,7 @@ import { getDemo } from "@/components/coach/exerciseDemos";
 import { logExercise, type SetDetail } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { markCompletedToday } from "@/lib/localSession";
+import { setPrefs, usePrefs } from "@/lib/prefs";
 import { VOICE, stopSpeaking, tone } from "@/components/coach/coachVoice";
 import { Pill, Ring, btnPrimary } from "@/components/ui/kit";
 
@@ -420,7 +421,11 @@ export function HoldCoach({
     lineupMs: 0,
   });
   const [sets, setSets] = useState<SetDetail[]>([]);
-  const [voiceOn, setVoiceOn] = useState(true);
+  // Saved preference. The loop reads the ref so it never restarts on a toggle.
+  const voiceOn = usePrefs().voice;
+  useEffect(() => {
+    voiceOnRef.current = voiceOn;
+  }, [voiceOn]);
   const [needsTap, setNeedsTap] = useState(false);
   const [noBodyHelp, setNoBodyHelp] = useState(false);
   const [helpDismissed, setHelpDismissed] = useState(false);
@@ -1135,8 +1140,8 @@ export function HoldCoach({
             type="button"
             onClick={() => {
               const next = !voiceOn;
-              setVoiceOn(next);
               voiceOnRef.current = next;
+              setPrefs({ voice: next });
               if (!next) stopSpeaking();
             }}
             aria-pressed={voiceOn}

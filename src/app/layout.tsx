@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Plus_Jakarta_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { ShellChrome } from "@/components/ShellChrome";
+import { RegisterServiceWorker } from "@/components/RegisterServiceWorker";
 
 const jakarta = Plus_Jakarta_Sans({
   variable: "--font-jakarta",
@@ -18,6 +19,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "Reknit — camera-coached rehab",
   description: "A calm, clinical companion for patellofemoral pain rehab.",
+  appleWebApp: { capable: true, title: "Reknit", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {
@@ -38,6 +40,7 @@ export default function RootLayout({
       className={`${jakarta.variable} ${ibmPlexMono.variable} h-full`}
     >
       <body className="min-h-full font-sans text-ink antialiased">
+        <RegisterServiceWorker />
         <ShellChrome>{children}</ShellChrome>
       </body>
     </html>

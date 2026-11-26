@@ -9,8 +9,11 @@ import { areaLowerLabel, sessionMinutes } from "@/data/catalog";
 import { entitlement, reminderLabel, trialDaysLeft, useProfile } from "@/lib/profile";
 import { useActivePlan } from "@/lib/usePlan";
 import {
+  daysSinceTrained,
   doneToday,
-  streakFrom,
+  painChange,
+  streakDetail,
+  usePainEntries,
   trainedDays,
   useAllRecords,
   useCompletedDates,
@@ -25,13 +28,16 @@ export function TodayScreen() {
   const active = useActivePlan();
   const records = useAllRecords();
   const completed = useCompletedDates();
+  const pain = usePainEntries();
   const [painOpen, setPainOpen] = useState(false);
 
   if (!active) return null;
   const days = trainedDays(records, completed);
   const week = weekStrip(days);
   const trainedThisWeek = week.filter((d) => d.state === "done").length;
-  const streak = streakFrom(days);
+  const { count: streak, protectedDay } = streakDetail(days);
+  const away = daysSinceTrained(days);
+  const change = painChange(pain);
   const done = doneToday(records);
   const usable = active.usable;
   const remaining = usable.filter((e) => !done.has(e.slug));
@@ -55,15 +61,27 @@ export function TodayScreen() {
           </h1>
         </div>
         <Pill tone="soft" className="bg-white shadow-[0_4px_14px_rgba(60,100,120,0.10)]">
-          {streak > 0 ? `${streak} day streak` : "Start a streak"}
+          {streak > 0 ? `${streak} day streak${protectedDay ? " · rest day kept" : ""}` : "Start a streak"}
         </Pill>
       </div>
+
+      {away !== null && away >= 2 && (
+        <Card className="bg-white p-4">
+          <p className="font-sans text-sm font-extrabold">
+            {away >= 7 ? "Welcome back" : `It has been ${away} days`}
+          </p>
+          <p className="mt-1 font-sans text-xs text-ink/65">
+            A short session today is enough to get going again. There&apos;s no need to catch up.
+          </p>
+        </Card>
+      )}
 
       <Card>
         <div className="flex items-center justify-between">
           <span className="font-sans text-sm font-extrabold">This week</span>
           <span className="font-sans text-xs text-ink/55">
             {trainedThisWeek} {trainedThisWeek === 1 ? "day" : "days"} trained
+            {change ? ` · pain ${change.delta === 0 ? "unchanged" : change.delta < 0 ? `down ${-change.delta}` : `up ${change.delta}`} since you started` : ""}
           </span>
         </div>
         <div className="mt-3 flex justify-between">
