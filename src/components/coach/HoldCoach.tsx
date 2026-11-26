@@ -204,6 +204,37 @@ type Delegate = "GPU" | "CPU";
  * on the bookkeeping that VIDEO can.
  */
 type DetectMode = "VIDEO" | "IMAGE";
+/**
+ * The pose library ships a SIMD and a non-SIMD WebAssembly build and picks one
+ * by feature detection. Safari reports SIMD support but has been seen trapping
+ * inside the allocator ("Out of bounds memory access ... _malloc") on every
+ * frame, so the non-SIMD build is kept as an explicit alternative.
+ */
+type WasmBuild = "simd" | "nosimd";
+interface Engine {
+  delegate: Delegate;
+  mode: DetectMode;
+  wasm: WasmBuild;
+}
+
+function filesetFor(wasm: WasmBuild): Vision {
+  const name = wasm === "simd" ? "vision_wasm_internal" : "vision_wasm_nosimd_internal";
+  return { wasmLoaderPath: `${WASM_BASE_URL}/${name}.js`, wasmBinaryPath: `${WASM_BASE_URL}/${name}.wasm` };
+}
+
+/** Safari, and every browser on iOS, which all run WebKit underneath. */
+function isWebKit(): boolean {
+  const ua = navigator.userAgent;
+  return /Safari/.test(ua) && !/Chrome\/|Chromium|Edg\//.test(ua);
+}
+
+/** What to try next when an engine keeps throwing, or null when nothing is left. */
+function nextEngine(e: Engine, flipped: boolean): Engine | null {
+  if (e.delegate === "GPU") return { ...e, delegate: "CPU" };
+  if (e.mode === "VIDEO") return { ...e, delegate: "CPU", mode: "IMAGE" };
+  if (!flipped) return { delegate: "CPU", mode: "IMAGE", wasm: e.wasm === "simd" ? "nosimd" : "simd" };
+  return null;
+}
 
 async function createLandmarker(
   vision: Vision,
@@ -315,6 +346,9 @@ export function HoldCoach({
   // Detection health, for the GPU -> CPU fallback and the "can't see you" help.
   const delegateRef = useRef<Delegate>("GPU");
   const modeRef = useRef<DetectMode>("VIDEO");
+  const wasmRef = useRef<WasmBuild>("simd");
+  const flippedRef = useRef(false);
+  const detectWidthRef = useRef(DETECT_MAX_WIDTH);
   const rebuildingRef = useRef(false);
   const probeRef = useRef<PoseLandmarkerType | null>(null);
   const probingRef = useRef(false);
@@ -375,43 +409,57 @@ export function HoldCoach({
   useEffect(() => {
     let cancelled = false;
     let stream: MediaStream | null = null;
-    let visionRef: { vision: Vision; PoseLandmarker: PoseLandmarkerClass } | null = null;
+    let visionRef: { PoseLandmarker: PoseLandmarkerClass } | null = null;
 
     /**
-     * Rebuild the model on a different delegate or running mode. Used when the
-     * current one keeps throwing, or when the CPU has shown the GPU is blind.
+     * Rebuild the model on a different engine. Used when the current one keeps
+     * throwing, or when the CPU has shown the GPU is blind. The old model is
+     * closed first: on phones and Safari every extra instance is a lot of
+     * memory, and a second one alive beside the first is how allocation fails.
      */
-    async function rebuild(delegate: Delegate, mode: DetectMode, reason: string) {
+    async function rebuild(engine: Engine, reason: string) {
       if (rebuildingRef.current || !visionRef) return;
       rebuildingRef.current = true;
-      console.warn(`[coach] ${reason}; rebuilding the pose model (${delegate}, ${mode})`);
+      console.warn(`[coach] ${reason}; rebuilding the pose model (${engine.delegate}/${engine.mode}/${engine.wasm})`);
       try {
-        const { landmarker } = await createLandmarker(visionRef.vision, visionRef.PoseLandmarker, delegate, mode);
+        const old = landmarkerRef.current;
+        landmarkerRef.current = null;
+        old?.close();
+        const { landmarker, delegate } = await createLandmarker(
+          filesetFor(engine.wasm),
+          visionRef.PoseLandmarker,
+          engine.delegate,
+          engine.mode,
+        );
         if (cancelled) {
           landmarker.close();
           return;
         }
-        landmarkerRef.current?.close();
         landmarkerRef.current = landmarker;
         delegateRef.current = delegate;
-        modeRef.current = mode;
+        modeRef.current = engine.mode;
+        wasmRef.current = engine.wasm;
         framesRef.current = 0;
         hitsRef.current = 0;
         errorRunRef.current = 0;
         lastTsRef.current = 0;
         lastVideoTimeRef.current = -1;
       } catch (err) {
-        console.error(`[coach] ${delegate}/${mode} pose model failed to build`, err);
-        lastErrorRef.current = `rebuild ${delegate}/${mode}: ${err instanceof Error ? err.message : String(err)}`;
+        console.error(`[coach] ${engine.delegate}/${engine.mode}/${engine.wasm} pose model failed to build`, err);
+        lastErrorRef.current = `build ${engine.delegate}/${engine.mode}/${engine.wasm}: ${err instanceof Error ? err.message : String(err)}`;
+        errorRunRef.current = 30;
       } finally {
         rebuildingRef.current = false;
       }
     }
 
-    /** The detection keeps throwing: GPU, then CPU, then frame-by-frame CPU. */
+    /** The detection keeps throwing: step down to the next engine, if there is one. */
     function recover() {
-      if (delegateRef.current === "GPU") void rebuild("CPU", modeRef.current, "pose detection keeps failing on the GPU");
-      else if (modeRef.current === "VIDEO") void rebuild("CPU", "IMAGE", "video-mode detection keeps failing on the CPU");
+      const current: Engine = { delegate: delegateRef.current, mode: modeRef.current, wasm: wasmRef.current };
+      const next = nextEngine(current, flippedRef.current);
+      if (!next) return;
+      if (next.wasm !== current.wasm) flippedRef.current = true;
+      void rebuild(next, `${current.delegate}/${current.mode}/${current.wasm} keeps failing`);
     }
 
     /**
@@ -424,14 +472,16 @@ export function HoldCoach({
       try {
         if (!probeRef.current) {
           probeRef.current = (
-            await createLandmarker(visionRef.vision, visionRef.PoseLandmarker, "CPU", "IMAGE")
+            await createLandmarker(filesetFor(wasmRef.current), visionRef.PoseLandmarker, "CPU", "IMAGE")
           ).landmarker;
         }
         const fc = frameCanvasRef.current;
         if (cancelled || !fc) return;
         const sees = probeRef.current.detect(fc).landmarks.length > 0;
         if (sees && hitsRef.current === 0 && delegateRef.current === "GPU") {
-          await rebuild("CPU", "VIDEO", "the CPU model sees someone the GPU model does not");
+          probeRef.current?.close();
+          probeRef.current = null;
+          await rebuild({ delegate: "CPU", mode: "VIDEO", wasm: wasmRef.current }, "the CPU model sees someone the GPU model does not");
         }
       } catch (err) {
         console.warn("[coach] CPU probe failed", err);
@@ -471,16 +521,35 @@ export function HoldCoach({
 
       setStatus("loading-model");
       try {
-        const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
-        const vision = await FilesetResolver.forVisionTasks(WASM_BASE_URL);
-        visionRef = { vision, PoseLandmarker };
-        const { landmarker, delegate } = await createLandmarker(vision, PoseLandmarker);
+        const { PoseLandmarker } = await import("@mediapipe/tasks-vision");
+        visionRef = { PoseLandmarker };
+        // WebKit starts on the plain CPU model: one instance, the non-SIMD
+        // build, a smaller frame. The GPU path there has been seen returning
+        // nothing, and the SIMD build trapping in the allocator. URL switches
+        // (?delegate=cpu|gpu, ?wasm=simd|nosimd, ?mode=image) override this so
+        // a device can be tried each way without a rebuild.
+        const params = new URLSearchParams(window.location.search);
+        const webkit = isWebKit();
+        const engine: Engine = {
+          delegate: params.get("delegate") === "gpu" ? "GPU" : params.get("delegate") === "cpu" || webkit ? "CPU" : "GPU",
+          mode: params.get("mode") === "image" ? "IMAGE" : "VIDEO",
+          wasm: params.get("wasm") === "simd" ? "simd" : params.get("wasm") === "nosimd" || webkit ? "nosimd" : "simd",
+        };
+        detectWidthRef.current = webkit ? 480 : DETECT_MAX_WIDTH;
+        const { landmarker, delegate } = await createLandmarker(
+          filesetFor(engine.wasm),
+          PoseLandmarker,
+          engine.delegate,
+          engine.mode,
+        );
         if (cancelled) {
           landmarker.close();
           return;
         }
         landmarkerRef.current = landmarker;
         delegateRef.current = delegate;
+        modeRef.current = engine.mode;
+        wasmRef.current = engine.wasm;
       } catch (err) {
         if (cancelled) return;
         console.error(err);
@@ -542,7 +611,7 @@ export function HoldCoach({
         try {
           if (!frameCanvasRef.current) frameCanvasRef.current = document.createElement("canvas");
           const fc = frameCanvasRef.current;
-          const fw = Math.min(DETECT_MAX_WIDTH, video.videoWidth);
+          const fw = Math.min(detectWidthRef.current, video.videoWidth);
           const fh = Math.round((fw * video.videoHeight) / video.videoWidth);
           if (fc.width !== fw || fc.height !== fh) {
             fc.width = fw;
@@ -617,7 +686,7 @@ export function HoldCoach({
           const since = Math.max(lastSeenRef.current, lineupStartRef.current);
           setNoBodyHelp(!landmarks && now - since > NO_BODY_HELP_MS);
           setDiag(
-            `${delegateRef.current}/${modeRef.current} · ${video.videoWidth}×${video.videoHeight} · frames ${framesRef.current} · found ${hitsRef.current} · errors ${errorRunRef.current}` +
+            `${delegateRef.current}/${modeRef.current}/${wasmRef.current} · ${video.videoWidth}×${video.videoHeight} · frames ${framesRef.current} · found ${hitsRef.current} · errors ${errorRunRef.current}` +
               (errorRunRef.current > 0 ? ` · ${lastErrorRef.current.slice(0, 120)}` : ""),
           );
           if (landmarks) {
