@@ -141,8 +141,7 @@ function fromProgramme(e: Exercise): CatalogExercise {
     manual,
     noCameraReason: coach
       ? null
-      : (NEEDS_FOOTAGE[e.slug] ??
-        "This is an isometric hold, so there is no visible movement for the camera to track. Use the hold timer instead."),
+      : (NEEDS_FOOTAGE[e.slug] ?? "No camera check for this exercise yet. Use the timer."),
   };
 }
 

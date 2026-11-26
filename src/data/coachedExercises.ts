@@ -123,18 +123,62 @@ export const coachedExercises: Record<string, CoachedExercise> = {
         "Stand side-on to the camera with room to step forward, whole body in frame.",
     },
   },
+  "isometric-knee-extension": {
+    calibration: "protocol",
+    provenance:
+      "Checks that the leg is lying straight and stays there for the hold. The camera cannot see the thigh muscle tighten, so it confirms position and stillness, not effort. The 165 degree floor is the guidance's \"leg straight\" with allowance for landmark noise, not yet measured against footage.",
+    config: {
+      slug: "isometric-knee-extension",
+      name: "Isometric Knee Extension",
+      mode: "hold",
+      // "Leg straight" is a knee angle of 180. Landmark noise on a lying body
+      // is several degrees, so the floor sits 15 below straight.
+      signal: { kind: "jointBand", knee: { min: 165 } },
+      targetReps: 5,
+      // The guidance gives 5-45s, building up. Start at the bottom of the range.
+      hold: { minHoldMs: 5_000 },
+      setupHint:
+        "Lie on your back, side-on to the camera, with your whole leg in frame.",
+    },
+  },
+
+  "hip-abduction": {
+    calibration: "protocol",
+    provenance:
+      "Counts a hold when the top leg is lifted clear of the bottom leg: 25 degrees between the legs at the hip, a lenient reading of the guidance's \"lifts straight up like a scissor\". Not yet measured against footage of side-lying movement, and pose tracking is least certain on a lying body, so treat it as the least proven check here.",
+    config: {
+      slug: "hip-abduction",
+      name: "Hip Abduction",
+      mode: "hold",
+      signal: { kind: "legSeparation", minAngle: 25 },
+      targetReps: 5,
+      hold: { minHoldMs: 5_000 },
+      setupHint:
+        "Lie on your side facing the camera, whole body in frame, phone propped at floor height.",
+    },
+  },
+
+  "single-leg-squat": {
+    calibration: "protocol",
+    provenance:
+      "A rep needs one foot clear of the floor and the standing knee bent to 150 degrees or deeper. The guidance sets no depth (\"only go as deep as you can control\"), so 150 only confirms a real bend, not a target. Not yet measured against footage.",
+    config: {
+      slug: "single-leg-squat",
+      name: "Single Leg Squat",
+      mode: "reps",
+      signal: { kind: "singleLegSquat", minAnkleGap: 0.1, standingKneeMax: 150 },
+      targetReps: 5,
+      setupHint:
+        "Stand side-on to the camera, a chair within reach, with your whole body in frame.",
+    },
+  },
 };
 
 /**
  * Exercises with no camera coaching, and why. Shown to the user rather than
  * left as a silent gap, and kept here so the reason travels with the decision.
  */
-export const NEEDS_FOOTAGE: Record<string, string> = {
-  "single-leg-squat":
-    "Needs both a one-legged stance and a controlled knee bend read at the same time, and the guidance sets no depth target to derive one from. Reference footage would settle it.",
-  "hip-abduction":
-    "Filmed side-lying but tracked front-on, and the lifting leg travels along the camera's depth axis from most angles. Needs footage shot at the intended framing before a threshold means anything.",
-};
+export const NEEDS_FOOTAGE: Record<string, string> = {};
 
 export function getCoachedExercise(slug: string): CoachedExercise | undefined {
   return coachedExercises[slug];

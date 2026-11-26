@@ -282,6 +282,16 @@ export type HoldSignal =
    */
   | { kind: "singleLegStance"; minAnkleGap: number }
   /**
+   * A single-leg squat: one foot clear of the floor AND the planted knee
+   * bent. It is `singleLegStance` plus a knee band on the standing leg, read
+   * together, because either half alone is a different movement — a bend with
+   * both feet down is a mini squat, and a lifted foot with a straight leg is a
+   * balance hold. The guidance sets no depth ("only go as deep as you can
+   * control"), so `standingKneeMax` is a floor for "this was a real bend", not
+   * a target to reach.
+   */
+  | { kind: "singleLegSquat"; minAnkleGap: number; standingKneeMax: number }
+  /**
    * Angle between the two legs at the hips — a hip abduction. Needs the
    * front-on framing the exercise is filmed in; side-on, the lifting leg
    * travels along the camera's depth axis and this reads near zero.
@@ -546,6 +556,37 @@ export function evaluateSignal(
       side: standingSide,
       kneeAngle: standing?.knee ?? null,
       hipAngle: standing?.hip ?? null,
+    };
+  }
+
+  if (signal.kind === "singleLegSquat") {
+    if (torsoLength === null) return null;
+    const left = landmarks[LANDMARK.leftAnkle];
+    const right = landmarks[LANDMARK.rightAnkle];
+    if (!visible(left) || !visible(right)) return null;
+    const gap = Math.abs(right.y - left.y) / torsoLength;
+    const standingSide: Side = right.y - left.y >= 0 ? "right" : "left";
+    // The planted leg's knee is the one that has to bend. If its chain is not
+    // confidently seen we cannot tell a squat from a balance hold, so this
+    // reads as unreadable rather than guessing.
+    const standing = legs.find((l) => l.side === standingSide);
+    if (!standing) return null;
+    const lifted = gap >= signal.minAnkleGap;
+    const bent = standing.knee <= signal.standingKneeMax;
+    return {
+      hint: !lifted
+        ? "Lift one foot clearly off the floor."
+        : !bent
+          ? "Hips back, then bend your standing knee a little more."
+          : undefined,
+      inPosition: lifted && bent,
+      quality: Math.min(
+        atLeastScore(gap, signal.minAnkleGap, RATIO_TOLERANCE),
+        bandScore(standing.knee, { max: signal.standingKneeMax }, ANGLE_TOLERANCE),
+      ),
+      side: standingSide,
+      kneeAngle: standing.knee,
+      hipAngle: standing.hip,
     };
   }
 

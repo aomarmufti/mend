@@ -6,6 +6,8 @@ import { Card, Pill, btnPrimary, eyebrow } from "@/components/ui/kit";
 import { MODE_LABEL, type CatalogExercise } from "@/data/catalog";
 import { ReferenceLoop } from "@/components/coach/ReferenceLoop";
 import { ReferenceFigure } from "@/components/coach/ReferenceFigure";
+import { ExerciseDemo } from "@/components/coach/ExerciseDemo";
+import { getDemo } from "@/components/coach/exerciseDemos";
 import { VideoEmbed } from "@/components/library/VideoEmbed";
 import { CalibrationNote } from "@/components/coach/CalibrationNote";
 
@@ -54,6 +56,8 @@ export function ExerciseIntro({
           <ReferenceLoop clip={exercise.reference} className="aspect-[4/3] w-full rounded-[22px]" />
         ) : exercise.slug === "heel-slides" ? (
           <ReferenceFigure />
+        ) : getDemo(exercise.slug) ? (
+          <ExerciseDemo slug={exercise.slug} />
         ) : (
           <VideoEmbed exerciseName={exercise.name} />
         )}

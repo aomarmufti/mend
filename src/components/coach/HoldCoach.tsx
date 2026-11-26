@@ -42,6 +42,8 @@ import {
 export type Framing = "side" | "front";
 export type Posture = "standing" | "lying";
 import { ReferenceLoop, type ReferenceClip } from "@/components/coach/ReferenceLoop";
+import { ExerciseDemo } from "@/components/coach/ExerciseDemo";
+import { getDemo } from "@/components/coach/exerciseDemos";
 import { logExercise, type SetDetail } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { markCompletedToday } from "@/lib/localSession";
@@ -929,6 +931,17 @@ export function HoldCoach({
                   </button>
                 )}
                 {reference && !showRef && (
+                  <button type="button" onClick={() => setShowRef(true)} className="self-start">
+                    <Pill tone="glass">▶ Watch how</Pill>
+                  </button>
+                )}
+                {/* No filmed clip: show the animated demo in the same slot. */}
+                {!reference && getDemo(config.slug) && showRef && (
+                  <button type="button" onClick={() => setShowRef(false)} aria-label="Hide the demonstration" className="w-28 text-left">
+                    <ExerciseDemo slug={config.slug} compact />
+                  </button>
+                )}
+                {!reference && getDemo(config.slug) && !showRef && (
                   <button type="button" onClick={() => setShowRef(true)} className="self-start">
                     <Pill tone="glass">▶ Watch how</Pill>
                   </button>
