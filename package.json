@@ -9,9 +9,13 @@
     "lint": "eslint",
     "test": "tsx tests/repCounting.test.mjs && tsx tests/formQuality.test.mjs && tsx tests/setupCheck.test.mjs && tsx tests/heelSlide.test.mjs && tsx tests/progress.test.mjs && tsx tests/newCameraChecks.test.mjs && tsx tests/exerciseDemos.test.mjs",
     "calibrate": "node scripts/calibrate.mjs",
+    "ios:sync": "cap sync ios",
+    "ios:open": "cap sync ios && cap open ios",
     "replay": "node scripts/replay.mjs"
   },
   "dependencies": {
+    "@capacitor/core": "8.6.3",
+    "@capacitor/ios": "8.6.3",
     "@mediapipe/tasks-vision": "^0.10.35",
     "@tensorflow/tfjs-backend-cpu": "4.22.0",
     "@tensorflow/tfjs-backend-webgl": "4.22.0",
@@ -22,6 +26,7 @@
     "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.6.3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
