@@ -1,10 +1,12 @@
 "use client";
 
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ExerciseIntro } from "@/components/exercise/ExerciseIntro";
 import { getCatalogExercise } from "@/data/catalog";
 import { canUse, useHydrated, useProfile } from "@/lib/profile";
 import { useActivePlan } from "@/lib/usePlan";
+import { preloadPoseModel } from "@/lib/preloadPose";
 
 export function ExercisePage({ slug, from }: { slug: string; from: "plan" | "try" }) {
   const router = useRouter();
@@ -18,6 +20,10 @@ export function ExercisePage({ slug, from }: { slug: string; from: "plan" | "try
       ? { href: "/try", label: "Free preview" }
       : { href: "/plan", label: active ? `${active.shape.areaLabel} plan` : "Plan" };
   const q = `exercise=${slug}&from=${from}`;
+
+  useEffect(() => {
+    if (allowed && exercise.mode === "camera") preloadPoseModel();
+  }, [allowed, exercise.mode]);
 
   return (
     <ExerciseIntro

@@ -3,6 +3,7 @@ import { Plus_Jakarta_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { ShellChrome } from "@/components/ShellChrome";
 import { RegisterServiceWorker } from "@/components/RegisterServiceWorker";
+import { ErrorReporter } from "@/components/ErrorReporter";
 
 const jakarta = Plus_Jakarta_Sans({
   variable: "--font-jakarta",
@@ -41,6 +42,7 @@ export default function RootLayout({
     >
       <body className="min-h-full font-sans text-ink antialiased">
         <RegisterServiceWorker />
+        <ErrorReporter />
         <ShellChrome>{children}</ShellChrome>
       </body>
     </html>
