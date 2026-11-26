@@ -53,7 +53,7 @@ export function PlanReady({ conditionSlug, adding }: { conditionSlug: string; ad
         </div>
         {!plan.staged && (
           <p className="mt-3 rounded-xl bg-chip px-3 py-2 font-sans text-[11px] leading-relaxed text-ink/60">
-            No clinically sourced programme exists for this condition in Mend yet, so this plan is
+            No clinically sourced programme exists for this condition in Reknit yet, so this plan is
             general mobility work for the area, not a prescription.
           </p>
         )}

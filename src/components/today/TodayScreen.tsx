@@ -44,7 +44,12 @@ export function TodayScreen() {
     <div className="space-y-3 px-5 pt-[calc(2rem+env(safe-area-inset-top))]">
       <div className="flex items-start justify-between">
         <div>
-          <p className="font-sans text-xs text-ink/55">{WEEKDAY.format(new Date())}</p>
+          <p className="font-sans text-xs text-ink/55">
+            {WEEKDAY.format(new Date())} ·{" "}
+            <Link href="/settings" className="font-bold underline">
+              Settings
+            </Link>
+          </p>
           <h1 className="font-display text-[28px] leading-tight font-extrabold">
             <Greeting />
           </h1>

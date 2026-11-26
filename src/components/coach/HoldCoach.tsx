@@ -42,6 +42,9 @@ import {
 export type Framing = "side" | "front";
 export type Posture = "standing" | "lying";
 import { ReferenceLoop, type ReferenceClip } from "@/components/coach/ReferenceLoop";
+import { ExerciseDemo } from "@/components/coach/ExerciseDemo";
+import type { MoveNetDetector } from "@/components/coach/movenet";
+import { getDemo } from "@/components/coach/exerciseDemos";
 import { logExercise, type SetDetail } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { markCompletedToday } from "@/lib/localSession";
@@ -54,6 +57,8 @@ const WASM_BASE_URL = "/mediapipe/wasm";
 const MODEL_URL = "/mediapipe/models/pose_landmarker_lite.task";
 
 const CALIBRATION_FRAMES = 30;
+/** MoveNet reports a few times a second, so fewer readings make the same few seconds. */
+const MOVENET_CALIBRATION_FRAMES = 10;
 const UI_INTERVAL_MS = 100;
 /** After this long, offer to start without a perfect line-up. */
 const LINEUP_ESCAPE_MS = 8_000;
@@ -65,9 +70,7 @@ const NO_BODY_HELP_MS = 5_000;
  * has found no one in this many frames, or failed this many in a row, the
  * coach rebuilds it on the CPU once.
  */
-const GPU_EMPTY_FRAMES = 45;
 const GPU_ERROR_FRAMES = 8;
-const CPU_ERROR_FRAMES = 30;
 /**
  * A GPU model that works but is slow is worse than the CPU one: on an Intel
  * Mac in Safari the GPU took seconds per frame where the CPU took ~120 ms.
@@ -77,6 +80,17 @@ const CPU_ERROR_FRAMES = 30;
 const GPU_WARMUP_FRAMES = 5;
 const GPU_SLOW_SAMPLES = 10;
 const GPU_SLOW_MS = 150;
+/**
+ * "Found no one" is not the same as "broken": someone walking back from the
+ * laptop is simply not in view yet, and rebuilding the model on the CPU after
+ * a second and a half of an empty room (as this once did) throws away the
+ * good GPU model and slows everything down. Instead, once the GPU model has
+ * seen no one for this many frames, a CPU model gets a second opinion on one
+ * frame every PROBE_EVERY frames. Only if the CPU sees a person the GPU is
+ * missing does the coach switch.
+ */
+const GPU_EMPTY_FRAMES = 90;
+const PROBE_EVERY = 60;
 /**
  * Frames go to the model through a 2D canvas, not the <video> element.
  * Uploading a camera-backed <video> straight into WebGL yields blank frames
@@ -195,15 +209,54 @@ export interface CoachResult {
 type Vision = Awaited<ReturnType<typeof import("@mediapipe/tasks-vision").FilesetResolver.forVisionTasks>>;
 type PoseLandmarkerClass = typeof import("@mediapipe/tasks-vision").PoseLandmarker;
 type Delegate = "GPU" | "CPU";
+/**
+ * VIDEO tracks across frames and needs strictly increasing timestamps. IMAGE
+ * judges each frame on its own, with no timestamp state, so it is the last
+ * resort when VIDEO keeps throwing: slower and less steady, but it cannot fail
+ * on the bookkeeping that VIDEO can.
+ */
+type DetectMode = "VIDEO" | "IMAGE";
+/**
+ * The pose library ships a SIMD and a non-SIMD WebAssembly build and picks one
+ * by feature detection. Safari reports SIMD support but has been seen trapping
+ * inside the allocator ("Out of bounds memory access ... _malloc") on every
+ * frame, so the non-SIMD build is kept as an explicit alternative.
+ */
+type WasmBuild = "simd" | "nosimd";
+interface Engine {
+  delegate: Delegate;
+  mode: DetectMode;
+  wasm: WasmBuild;
+}
+
+function filesetFor(wasm: WasmBuild): Vision {
+  const name = wasm === "simd" ? "vision_wasm_internal" : "vision_wasm_nosimd_internal";
+  return { wasmLoaderPath: `${WASM_BASE_URL}/${name}.js`, wasmBinaryPath: `${WASM_BASE_URL}/${name}.wasm` };
+}
+
+/** Safari, and every browser on iOS, which all run WebKit underneath. */
+function isWebKit(): boolean {
+  const ua = navigator.userAgent;
+  return /Safari/.test(ua) && !/Chrome\/|Chromium|Edg\//.test(ua);
+}
+
+/** What to try next when an engine keeps throwing, or null when nothing is left. */
+function nextEngine(e: Engine, flipped: boolean): Engine | null {
+  if (e.delegate === "GPU") return { ...e, delegate: "CPU" };
+  if (e.mode === "VIDEO") return { ...e, delegate: "CPU", mode: "IMAGE" };
+  if (!flipped) return { delegate: "CPU", mode: "IMAGE", wasm: e.wasm === "simd" ? "nosimd" : "simd" };
+  return null;
+}
 
 async function createLandmarker(
   vision: Vision,
   PoseLandmarker: PoseLandmarkerClass,
   prefer: Delegate = "GPU",
+  mode: DetectMode = "VIDEO",
 ): Promise<{ landmarker: PoseLandmarkerType; delegate: Delegate }> {
   const options = (delegate: Delegate) => ({
     baseOptions: { modelAssetPath: MODEL_URL, delegate },
-    runningMode: "VIDEO" as const,
+    runningMode: mode,
     numPoses: 1,
     // MediaPipe needs a WebGL context even on the CPU delegate (it uploads
     // each frame as a texture). Left to itself, on Safari 17+ it makes one on
@@ -310,7 +363,29 @@ export function HoldCoach({
   const voiceOnRef = useRef(true);
   // Detection health, for the GPU -> CPU fallback and the "can't see you" help.
   const delegateRef = useRef<Delegate>("GPU");
+  const modeRef = useRef<DetectMode>("VIDEO");
+  const wasmRef = useRef<WasmBuild>("simd");
+  // Which tracker is live. MediaPipe is the default; MoveNet (TensorFlow.js)
+  // takes over on WebKit, and anywhere MediaPipe has run out of options.
+  const engineKindRef = useRef<"mediapipe" | "movenet">("mediapipe");
+  const moveNetRef = useRef<MoveNetDetector | null>(null);
+  const moveNetBusyRef = useRef(false);
+  // Counts MoveNet results. The line-up gate and calibration judge stillness
+  // and average positions, which only means something once per new reading:
+  // run per screen tick on one cached reading, a few pixels of shimmer between
+  // readings looks like fast movement and the countdown never finishes.
+  const detectSeqRef = useRef(0);
+  const gateSeqRef = useRef(-1);
+  const lastGateRef = useRef<{ assessment: ReturnType<typeof assessSetup>; step: ReturnType<typeof stepGate> } | null>(null);
+  const flippedRef = useRef(false);
+  const detectWidthRef = useRef(DETECT_MAX_WIDTH);
   const rebuildingRef = useRef(false);
+  const probeRef = useRef<PoseLandmarkerType | null>(null);
+  const probingRef = useRef(false);
+  const lastTsRef = useRef(0);
+  const lastErrorRef = useRef("");
+  const announcedRef = useRef(false);
+  const simulateRef = useRef("");
   const framesRef = useRef(0);
   const hitsRef = useRef(0);
   const errorRunRef = useRef(0);
@@ -350,6 +425,11 @@ export function HoldCoach({
   const [noBodyHelp, setNoBodyHelp] = useState(false);
   const [helpDismissed, setHelpDismissed] = useState(false);
   const [bodySeen, setBodySeen] = useState(false);
+  // Brief confirmation the first time the body is read, so it is clear the
+  // system has found you before it starts asking you to move.
+  const [gotYou, setGotYou] = useState(false);
+  // Set only when detection is failing outright, as opposed to finding no one.
+  const [trackerError, setTrackerError] = useState("");
   const [diag, setDiag] = useState("");
   const [showRef, setShowRef] = useState(true);
 
@@ -361,35 +441,159 @@ export function HoldCoach({
   useEffect(() => {
     let cancelled = false;
     let stream: MediaStream | null = null;
-    let visionRef: { vision: Vision; PoseLandmarker: PoseLandmarkerClass } | null = null;
+    let visionRef: { PoseLandmarker: PoseLandmarkerClass } | null = null;
 
-    /** Rebuild the model on the CPU, once, when the GPU one is not producing. */
-    async function fallBackToCpu(reason: string) {
-      if (rebuildingRef.current || delegateRef.current === "CPU" || !visionRef) return;
+    /**
+     * Rebuild the model on a different engine. Used when the current one keeps
+     * throwing, or when the CPU has shown the GPU is blind. The old model is
+     * closed first: on phones and Safari every extra instance is a lot of
+     * memory, and a second one alive beside the first is how allocation fails.
+     */
+    async function rebuild(engine: Engine, reason: string) {
+      if (rebuildingRef.current || !visionRef) return;
       rebuildingRef.current = true;
-      console.warn(`[coach] ${reason}; rebuilding the pose model on the CPU`);
+      console.warn(`[coach] ${reason}; rebuilding the pose model (${engine.delegate}/${engine.mode}/${engine.wasm})`);
       try {
-        const { landmarker } = await createLandmarker(visionRef.vision, visionRef.PoseLandmarker, "CPU");
+        const old = landmarkerRef.current;
+        landmarkerRef.current = null;
+        old?.close();
+        const { landmarker, delegate } = await createLandmarker(
+          filesetFor(engine.wasm),
+          visionRef.PoseLandmarker,
+          engine.delegate,
+          engine.mode,
+        );
         if (cancelled) {
           landmarker.close();
           return;
         }
-        landmarkerRef.current?.close();
         landmarkerRef.current = landmarker;
-        delegateRef.current = "CPU";
+        delegateRef.current = delegate;
+        modeRef.current = engine.mode;
+        wasmRef.current = engine.wasm;
         framesRef.current = 0;
         hitsRef.current = 0;
         detectMsRef.current = [];
         errorRunRef.current = 0;
+        lastTsRef.current = 0;
         lastVideoTimeRef.current = -1;
       } catch (err) {
-        console.error("[coach] CPU pose model failed too", err);
+        console.error(`[coach] ${engine.delegate}/${engine.mode}/${engine.wasm} pose model failed to build`, err);
+        lastErrorRef.current = `build ${engine.delegate}/${engine.mode}/${engine.wasm}: ${err instanceof Error ? err.message : String(err)}`;
+        errorRunRef.current = 30;
       } finally {
         rebuildingRef.current = false;
       }
     }
 
+    /** Switch to the TensorFlow.js MoveNet tracker, closing MediaPipe first. */
+    async function startMoveNet(reason: string) {
+      if (rebuildingRef.current || engineKindRef.current === "movenet") return;
+      rebuildingRef.current = true;
+      console.warn(`[coach] ${reason}; switching to the MoveNet tracker`);
+      try {
+        const old = landmarkerRef.current;
+        landmarkerRef.current = null;
+        old?.close();
+        probeRef.current?.close();
+        probeRef.current = null;
+        const { createMoveNet, chooseVariant } = await import("@/components/coach/movenet");
+        const detector = await createMoveNet(chooseVariant(window.location.search));
+        if (cancelled) {
+          detector.close();
+          return;
+        }
+        moveNetRef.current = detector;
+        engineKindRef.current = "movenet";
+        lastLandmarksRef.current = null;
+        framesRef.current = 0;
+        hitsRef.current = 0;
+        errorRunRef.current = 0;
+        lastVideoTimeRef.current = -1;
+      } catch (err) {
+        console.error("[coach] MoveNet failed to start", err);
+        lastErrorRef.current = `movenet: ${err instanceof Error ? err.message : String(err)}`;
+        errorRunRef.current = 30;
+      } finally {
+        rebuildingRef.current = false;
+      }
+    }
+
+    /**
+     * Hand a frame to MoveNet. Its detection is asynchronous, so the loop keeps
+     * drawing with the latest result while one is in flight, and at most one is
+     * ever in flight.
+     */
+    function kickMoveNet(frame: HTMLCanvasElement | HTMLVideoElement) {
+      const detector = moveNetRef.current;
+      if (!detector || moveNetBusyRef.current) return;
+      moveNetBusyRef.current = true;
+      detector
+        .detect(frame)
+        .then((lm) => {
+          errorRunRef.current = 0;
+          lastLandmarksRef.current = lm;
+          detectSeqRef.current += 1;
+          if (lm) {
+            hitsRef.current += 1;
+            lastSeenRef.current = performance.now();
+          }
+        })
+        .catch((err) => {
+          errorRunRef.current += 1;
+          lastErrorRef.current = err instanceof Error ? err.message : String(err);
+          if (errorRunRef.current === 1) console.warn("[coach] MoveNet failed on a frame", err);
+        })
+        .finally(() => {
+          moveNetBusyRef.current = false;
+        });
+    }
+
+    /** The detection keeps throwing: step down to the next engine, if there is one. */
+    function recover() {
+      if (engineKindRef.current === "movenet") return;
+      const current: Engine = { delegate: delegateRef.current, mode: modeRef.current, wasm: wasmRef.current };
+      const next = nextEngine(current, flippedRef.current);
+      if (!next) {
+        void startMoveNet("MediaPipe has no engine left to try");
+        return;
+      }
+      if (next.wasm !== current.wasm) flippedRef.current = true;
+      void rebuild(next, `${current.delegate}/${current.mode}/${current.wasm} keeps failing`);
+    }
+
+    /**
+     * The GPU model has seen no one for a while. That usually just means no one
+     * is in view. Ask a CPU model about the current frame to find out which.
+     */
+    async function probeCpu() {
+      if (probingRef.current || rebuildingRef.current || !visionRef) return;
+      probingRef.current = true;
+      try {
+        if (!probeRef.current) {
+          probeRef.current = (
+            await createLandmarker(filesetFor(wasmRef.current), visionRef.PoseLandmarker, "CPU", "IMAGE")
+          ).landmarker;
+        }
+        const fc = frameCanvasRef.current;
+        if (cancelled || !fc) return;
+        const sees = probeRef.current.detect(fc).landmarks.length > 0;
+        if (sees && hitsRef.current === 0 && delegateRef.current === "GPU") {
+          probeRef.current?.close();
+          probeRef.current = null;
+          await rebuild({ delegate: "CPU", mode: "VIDEO", wasm: wasmRef.current }, "the CPU model sees someone the GPU model does not");
+        }
+      } catch (err) {
+        console.warn("[coach] CPU probe failed", err);
+      } finally {
+        probingRef.current = false;
+      }
+    }
+
     async function start() {
+      // ?simulate=video-fails makes every video-mode detection throw, so the
+      // recovery path can be exercised without a device that breaks that way.
+      simulateRef.current = new URLSearchParams(window.location.search).get("simulate") ?? "";
       setStatus("requesting");
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -417,16 +621,48 @@ export function HoldCoach({
 
       setStatus("loading-model");
       try {
-        const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
-        const vision = await FilesetResolver.forVisionTasks(WASM_BASE_URL);
-        visionRef = { vision, PoseLandmarker };
-        const { landmarker, delegate } = await createLandmarker(vision, PoseLandmarker);
-        if (cancelled) {
-          landmarker.close();
-          return;
+        const params = new URLSearchParams(window.location.search);
+        const webkit = isWebKit();
+        // WebKit (Safari, and every iPhone and iPad web view) goes straight to
+        // MoveNet: MediaPipe's WebAssembly build has been seen trapping in the
+        // allocator there, and skipping it also saves loading ~11 MB of wasm.
+        // ?engine=movenet|mediapipe overrides this to try a device each way.
+        const want = params.get("engine");
+        if (want === "movenet" || (webkit && want !== "mediapipe")) {
+          const { createMoveNet, chooseVariant } = await import("@/components/coach/movenet");
+          const detector = await createMoveNet(chooseVariant(window.location.search));
+          if (cancelled) {
+            detector.close();
+            return;
+          }
+          moveNetRef.current = detector;
+          engineKindRef.current = "movenet";
+        } else {
+          const { PoseLandmarker } = await import("@mediapipe/tasks-vision");
+          visionRef = { PoseLandmarker };
+          // Off WebKit, MediaPipe runs on the GPU model with the SIMD build, as
+          // before. URL switches (?delegate=cpu|gpu, ?wasm=simd|nosimd,
+          // ?mode=image) let a device be tried each way without a rebuild.
+          const engine: Engine = {
+            delegate: params.get("delegate") === "cpu" ? "CPU" : "GPU",
+            mode: params.get("mode") === "image" ? "IMAGE" : "VIDEO",
+            wasm: params.get("wasm") === "nosimd" ? "nosimd" : "simd",
+          };
+          const { landmarker, delegate } = await createLandmarker(
+            filesetFor(engine.wasm),
+            PoseLandmarker,
+            engine.delegate,
+            engine.mode,
+          );
+          if (cancelled) {
+            landmarker.close();
+            return;
+          }
+          landmarkerRef.current = landmarker;
+          delegateRef.current = delegate;
+          modeRef.current = engine.mode;
+          wasmRef.current = engine.wasm;
         }
-        landmarkerRef.current = landmarker;
-        delegateRef.current = delegate;
       } catch (err) {
         if (cancelled) return;
         console.error(err);
@@ -471,7 +707,8 @@ export function HoldCoach({
       const video = videoRef.current;
       const canvas = canvasRef.current;
       const landmarker = landmarkerRef.current;
-      if (!video || !canvas || !landmarker) return;
+      const useMoveNet = engineKindRef.current === "movenet";
+      if (!video || !canvas || (useMoveNet ? !moveNetRef.current : !landmarker)) return;
       if (video.readyState < 2 || !video.videoWidth) return;
       const phase = statusRef.current;
       if (phase === "done" || phase === "error") return;
@@ -486,50 +723,71 @@ export function HoldCoach({
         lastDetectAtRef.current = now;
         framesRef.current += 1;
         try {
-          if (!frameCanvasRef.current) frameCanvasRef.current = document.createElement("canvas");
-          const fc = frameCanvasRef.current;
-          const fw = Math.min(DETECT_MAX_WIDTH, video.videoWidth);
-          const fh = Math.round((fw * video.videoHeight) / video.videoWidth);
-          if (fc.width !== fw || fc.height !== fh) {
-            fc.width = fw;
-            fc.height = fh;
-          }
-          fc.getContext("2d")?.drawImage(video, 0, 0, fw, fh);
-          const t0 = performance.now();
-          const result = landmarker.detectForVideo(fc, now);
-          if (delegateRef.current === "GPU" && framesRef.current > GPU_WARMUP_FRAMES) {
-            const ms = detectMsRef.current;
-            ms.push(performance.now() - t0);
-            if (ms.length >= GPU_SLOW_SAMPLES) {
-              const median = [...ms].sort((a, b) => a - b)[Math.floor(ms.length / 2)];
-              detectMsRef.current = [];
-              if (median > GPU_SLOW_MS) void fallBackToCpu(`GPU pose model is slow (${Math.round(median)} ms a frame)`);
+          if (useMoveNet) {
+            // MoveNet crops and scales straight from the video into its own
+            // small canvas, so there is no full-size copy on the way.
+            kickMoveNet(video);
+            landmarks = lastLandmarksRef.current;
+          } else if (landmarker) {
+            if (!frameCanvasRef.current) frameCanvasRef.current = document.createElement("canvas");
+            const fc = frameCanvasRef.current;
+            const fw = Math.min(detectWidthRef.current, video.videoWidth);
+            const fh = Math.round((fw * video.videoHeight) / video.videoWidth);
+            if (fc.width !== fw || fc.height !== fh) {
+              fc.width = fw;
+              fc.height = fh;
             }
-          }
-          landmarks = result.landmarks[0] ?? null;
-          lastLandmarksRef.current = landmarks;
-          errorRunRef.current = 0;
-          if (landmarks) {
-            hitsRef.current += 1;
-            lastSeenRef.current = now;
+            fc.getContext("2d")?.drawImage(video, 0, 0, fw, fh);
+            if (
+              simulateRef.current === "mediapipe-fails" ||
+              (simulateRef.current === "video-fails" && modeRef.current === "VIDEO")
+            ) {
+              throw new Error("simulated MediaPipe failure");
+            }
+            // Whole, strictly increasing milliseconds: two frames can never
+            // share a timestamp, whatever the clock or the frame pacing does.
+            const ts = Math.max(Math.round(now), lastTsRef.current + 1);
+            lastTsRef.current = ts;
+            const t0 = performance.now();
+            const result = modeRef.current === "IMAGE" ? landmarker.detect(fc) : landmarker.detectForVideo(fc, ts);
+            landmarks = result.landmarks[0] ?? null;
+            lastLandmarksRef.current = landmarks;
+            errorRunRef.current = 0;
+            if (delegateRef.current === "GPU" && framesRef.current > GPU_WARMUP_FRAMES) {
+              const ms = detectMsRef.current;
+              ms.push(performance.now() - t0);
+              if (ms.length >= GPU_SLOW_SAMPLES) {
+                const median = [...ms].sort((a, b) => a - b)[Math.floor(ms.length / 2)];
+                detectMsRef.current = [];
+                if (median > GPU_SLOW_MS) {
+                  void rebuild(
+                    { delegate: "CPU", mode: modeRef.current, wasm: wasmRef.current },
+                    `GPU pose model is slow (${Math.round(median)} ms a frame)`,
+                  );
+                }
+              }
+            }
+            if (landmarks) {
+              hitsRef.current += 1;
+              lastSeenRef.current = now;
+            }
           }
         } catch (err) {
           // One dropped frame is not worth tearing the loop down for, but a
           // run of them means this delegate does not work on this device.
           errorRunRef.current += 1;
+          lastErrorRef.current = err instanceof Error ? err.message : String(err);
           if (errorRunRef.current === 1) console.warn("[coach] pose detection failed on a frame", err);
-          if (errorRunRef.current >= GPU_ERROR_FRAMES) void fallBackToCpu("pose detection keeps failing on the GPU");
-          // Failing on the CPU too: this browser can't run the model. Say so,
-          // rather than asking someone in plain view to step into it.
-          if (delegateRef.current === "CPU" && errorRunRef.current >= CPU_ERROR_FRAMES && statusRef.current === "lineup") {
-            console.error("[coach] pose detection fails on the CPU too", err);
-            setError("The camera coach can't run in this browser. Try Chrome, or do this one with the timer.");
-            setStatus("error");
-            return;
-          }
+          if (errorRunRef.current >= GPU_ERROR_FRAMES) recover();
         }
-        if (delegateRef.current === "GPU" && hitsRef.current === 0 && framesRef.current >= GPU_EMPTY_FRAMES) {
-          void fallBackToCpu(`GPU pose model found no one in ${framesRef.current} frames`);
+        if (
+          engineKindRef.current === "mediapipe" &&
+          delegateRef.current === "GPU" &&
+          hitsRef.current === 0 &&
+          framesRef.current >= GPU_EMPTY_FRAMES &&
+          framesRef.current % PROBE_EVERY === 0
+        ) {
+          void probeCpu();
         }
       } else {
         landmarks = lastLandmarksRef.current;
@@ -541,9 +799,19 @@ export function HoldCoach({
       if (phase === "lineup") {
         sampleLuminance(video, now);
         // Ready → still for a moment → 3, 2, 1 → go. Any slip resets it.
-        const assessment = assessSetup(landmarks, { luma: lumaRef.current.value }, aspect, setupSpec);
-        const step = stepGate(gateRef.current, assessment, now);
-        gateRef.current = step.state;
+        let assessment: ReturnType<typeof assessSetup>;
+        let step: ReturnType<typeof stepGate>;
+        const cached = lastGateRef.current;
+        if (useMoveNet && cached && gateSeqRef.current === detectSeqRef.current) {
+          // No new reading since the last step: do not judge stillness again.
+          ({ assessment, step } = cached);
+        } else {
+          assessment = assessSetup(landmarks, { luma: lumaRef.current.value }, aspect, setupSpec);
+          step = stepGate(gateRef.current, assessment, now);
+          gateRef.current = step.state;
+          gateSeqRef.current = detectSeqRef.current;
+          lastGateRef.current = { assessment, step };
+        }
         if (step.go || forceStartRef.current) {
           setStatus("calibrating");
         } else if (voiceOnRef.current) {
@@ -568,9 +836,22 @@ export function HoldCoach({
           const since = Math.max(lastSeenRef.current, lineupStartRef.current);
           setNoBodyHelp(!landmarks && now - since > NO_BODY_HELP_MS);
           setDiag(
-            `${delegateRef.current} · ${video.videoWidth}×${video.videoHeight} · frames ${framesRef.current} · found ${hitsRef.current} · errors ${errorRunRef.current}`,
+            (engineKindRef.current === "movenet"
+              ? `movenet/${moveNetRef.current?.backend ?? "?"}`
+              : `${delegateRef.current}/${modeRef.current}/${wasmRef.current}`) +
+              ` · ${video.videoWidth}×${video.videoHeight} · frames ${framesRef.current} · found ${hitsRef.current} · errors ${errorRunRef.current}` +
+              (errorRunRef.current > 0 ? ` · ${lastErrorRef.current.slice(0, 120)}` : ""),
           );
-          if (landmarks) setBodySeen(true);
+          if (landmarks) {
+            setBodySeen(true);
+            if (!announcedRef.current) {
+              announcedRef.current = true;
+              setGotYou(true);
+              setTimeout(() => setGotYou(false), 2200);
+              if (voiceOnRef.current) VOICE.lineUp("I can see you.");
+            }
+          }
+          setTrackerError(errorRunRef.current >= 30 ? lastErrorRef.current || "unknown error" : "");
           setUi((u) => ({
             ...u,
             hint: step.hint,
@@ -585,6 +866,11 @@ export function HoldCoach({
       // ---- calibrate resting position (only from lined-up frames) ----------
       const b = baselineRef.current;
       if (phase === "calibrating" && landmarks) {
+        if (useMoveNet && gateSeqRef.current === detectSeqRef.current) {
+          drawFrame(canvas, video, landmarks, null, true);
+          return;
+        }
+        gateSeqRef.current = detectSeqRef.current;
         const torso = torsoLengthOf(landmarks, aspect);
         const leftHip = landmarks[LANDMARK.leftHip];
         const rightHip = landmarks[LANDMARK.rightHip];
@@ -598,7 +884,7 @@ export function HoldCoach({
           if (leftAnkle && visibilityOf(leftAnkle) >= 0.5) sums.ankleY.left += leftAnkle.y;
           if (rightAnkle && visibilityOf(rightAnkle) >= 0.5) sums.ankleY.right += rightAnkle.y;
           calibFramesRef.current += 1;
-          if (calibFramesRef.current >= CALIBRATION_FRAMES) {
+          if (calibFramesRef.current >= (useMoveNet ? MOVENET_CALIBRATION_FRAMES : CALIBRATION_FRAMES)) {
             const n = calibFramesRef.current;
             baselineRef.current = {
               hipY: { left: sums.hipY.left / n || null, right: sums.hipY.right / n || null },
@@ -761,6 +1047,10 @@ export function HoldCoach({
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       landmarkerRef.current?.close();
       landmarkerRef.current = null;
+      probeRef.current?.close();
+      probeRef.current = null;
+      moveNetRef.current?.close();
+      moveNetRef.current = null;
       stream?.getTracks().forEach((t) => t.stop());
     };
     // config is provided by the parent and not expected to change identity
@@ -888,7 +1178,9 @@ export function HoldCoach({
                 ? "Hold still…"
                 : ui.count !== null
                   ? "Perfect, starting in…"
-                  : HINT_COPY[ui.hint]}
+                  : gotYou
+                    ? "✓ I can see you"
+                    : HINT_COPY[ui.hint]}
             </div>
             <div className="flex flex-1 items-center justify-center">
               {status === "lineup" && ui.count !== null && (
@@ -909,7 +1201,10 @@ export function HoldCoach({
                 >
                   ×
                 </button>
-                <p className="font-bold text-white">We can&apos;t see you yet</p>
+                <p className="font-bold text-white">
+                  {trackerError ? "The body tracker isn't responding on this device" : "We can't see you yet"}
+                </p>
+                {trackerError && <p className="mt-0.5">Reload the page to try again, or use the timer for this exercise.</p>}
                 <p className="mt-0.5">
                   Set the camera at about hip height and step back until your whole body is on screen, in good light.
                 </p>
@@ -977,6 +1272,17 @@ export function HoldCoach({
                   </button>
                 )}
                 {reference && !showRef && (
+                  <button type="button" onClick={() => setShowRef(true)} className="self-start">
+                    <Pill tone="glass">▶ Watch how</Pill>
+                  </button>
+                )}
+                {/* No filmed clip: show the animated demo in the same slot. */}
+                {!reference && getDemo(config.slug) && showRef && (
+                  <button type="button" onClick={() => setShowRef(false)} aria-label="Hide the demonstration" className="w-28 text-left">
+                    <ExerciseDemo slug={config.slug} compact />
+                  </button>
+                )}
+                {!reference && getDemo(config.slug) && !showRef && (
                   <button type="button" onClick={() => setShowRef(true)} className="self-start">
                     <Pill tone="glass">▶ Watch how</Pill>
                   </button>

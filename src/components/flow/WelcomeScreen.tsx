@@ -25,7 +25,7 @@ export function WelcomeScreen() {
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-2 font-display text-lg font-extrabold">
             <LogoMark className="h-6 w-6 text-white" accent="#34D3A0" />
-            Mend
+            Reknit
           </span>
           <Pill tone="glass">Live coach preview</Pill>
         </div>
@@ -54,7 +54,10 @@ export function WelcomeScreen() {
           Try for free, no sign-up
         </button>
         <p className="mt-3 text-center font-sans text-[11px] text-white/60">
-          Your video never leaves your phone.
+          Your video never leaves your phone.{" "}
+          <a href="/privacy" className="underline">
+            Privacy
+          </a>
         </p>
       </div>
     </div>

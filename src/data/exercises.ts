@@ -26,8 +26,8 @@ export const exercises: Exercise[] = [
       "Breathe normally through the hold — don't brace.",
       "Kneecap should feel like it's being pulled up your thigh.",
     ],
-    cameraCoach: false,
-    cameraNote: "Isometric — no visible movement. Hold-timer only, no angle tracking.",
+    cameraCoach: true,
+    cameraNote: "Isometric: the camera confirms the leg is straight and still, not the muscle effort.",
   },
   {
     id: 2,
@@ -43,7 +43,7 @@ export const exercises: Exercise[] = [
       "Lower slowly — don't let it drop.",
     ],
     cameraCoach: true,
-    cameraNote: "Needs a front-on camera framing, not side-on.",
+    cameraNote: "Side-lying, facing the camera; checks the top leg lifts clear of the bottom leg.",
   },
   {
     id: 3,
