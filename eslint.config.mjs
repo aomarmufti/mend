@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored model/WASM files and the generated native project.
+    "public/**",
+    "ios/**",
+    "native/**",
   ]),
 ]);
 

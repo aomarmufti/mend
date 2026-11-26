@@ -54,7 +54,10 @@ export function WelcomeScreen() {
           Try for free, no sign-up
         </button>
         <p className="mt-3 text-center font-sans text-[11px] text-white/60">
-          Your video never leaves your phone.
+          Your video never leaves your phone.{" "}
+          <a href="/privacy" className="underline">
+            Privacy
+          </a>
         </p>
       </div>
     </div>
