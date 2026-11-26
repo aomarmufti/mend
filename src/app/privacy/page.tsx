@@ -33,6 +33,12 @@ const sections: { h: string; p: string[] }[] = [
     ],
   },
   {
+    h: "Your rights",
+    p: [
+      "You can download a copy of your data (Settings > Download my data) and delete it (Settings > Delete all my data) at any time. You can withdraw consent in Settings.",
+    ],
+  },
+  {
     h: "Contact",
     p: ["Questions about privacy: hello@reknit.co.uk"],
   },

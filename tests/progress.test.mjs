@@ -1,5 +1,5 @@
 // Calendar and streak helpers behind Today and Progress.
-import { monthGrid, streakFrom, weekStrip, painChange } from '../src/lib/progress.ts';
+import { monthGrid, streakFrom, streakDetail, daysSinceTrained, weekStrip, painChange } from '../src/lib/progress.ts';
 
 const today = new Date(2026, 10, 11); // Wed 11 Nov 2026
 const days = new Set(['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-05']);
@@ -9,6 +9,11 @@ const check = (name, cond, got) => results.push([name, cond, got]);
 check('streak counts back from today', streakFrom(days, today) === 3, streakFrom(days, today));
 check('streak from yesterday when today not done', streakFrom(new Set(['2026-11-10', '2026-11-09']), today) === 2, '');
 check('no streak after a gap', streakFrom(new Set(['2026-11-08']), today) === 0, '');
+check('one missed day is forgiven and not counted', streakFrom(new Set(['2026-11-11', '2026-11-09', '2026-11-08']), today) === 3, streakFrom(new Set(['2026-11-11', '2026-11-09', '2026-11-08']), today));
+check('forgiven day is flagged', streakDetail(new Set(['2026-11-11', '2026-11-09']), today).protectedDay === true, '');
+check('two missed days still break it', streakFrom(new Set(['2026-11-11', '2026-11-08']), today) === 1, streakFrom(new Set(['2026-11-11', '2026-11-08']), today));
+check('allowance is used once within a week', streakFrom(new Set(['2026-11-11', '2026-11-09', '2026-11-07', '2026-11-06']), today) === 2, streakFrom(new Set(['2026-11-11', '2026-11-09', '2026-11-07', '2026-11-06']), today));
+check('days since trained', daysSinceTrained(new Set(['2026-11-08']), today) === 3 && daysSinceTrained(new Set(), today) === null, '');
 const w = weekStrip(days, today);
 check('week starts Monday 9th', w[0].key === '2026-11-09' && w[0].letter === 'M', w[0].key);
 check('week states', w.map((d) => d.state).join(',') === 'done,done,done,upcoming,upcoming,upcoming,upcoming', w.map((d) => d.state).join(','));

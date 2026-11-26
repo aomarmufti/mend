@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import type {
   NormalizedLandmark,
@@ -48,6 +48,7 @@ import { getDemo } from "@/components/coach/exerciseDemos";
 import { logExercise, type SetDetail } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { markCompletedToday } from "@/lib/localSession";
+import { setPrefs, usePrefs } from "@/lib/prefs";
 import { VOICE, stopSpeaking, tone } from "@/components/coach/coachVoice";
 import { Pill, Ring, btnPrimary } from "@/components/ui/kit";
 
@@ -420,7 +421,11 @@ export function HoldCoach({
     lineupMs: 0,
   });
   const [sets, setSets] = useState<SetDetail[]>([]);
-  const [voiceOn, setVoiceOn] = useState(true);
+  // Saved preference. The loop reads the ref so it never restarts on a toggle.
+  const voiceOn = usePrefs().voice;
+  useEffect(() => {
+    voiceOnRef.current = voiceOn;
+  }, [voiceOn]);
   const [needsTap, setNeedsTap] = useState(false);
   const [noBodyHelp, setNoBodyHelp] = useState(false);
   const [helpDismissed, setHelpDismissed] = useState(false);
@@ -431,6 +436,12 @@ export function HoldCoach({
   // Set only when detection is failing outright, as opposed to finding no one.
   const [trackerError, setTrackerError] = useState("");
   const [diag, setDiag] = useState("");
+  // Diagnostics are for us, not users: shown only with ?debug in the address.
+  const debug = useSyncExternalStore(
+    () => () => {},
+    () => new URLSearchParams(window.location.search).has("debug"),
+    () => false,
+  );
   const [showRef, setShowRef] = useState(true);
 
   const setStatus = (s: Status) => {
@@ -1135,8 +1146,8 @@ export function HoldCoach({
             type="button"
             onClick={() => {
               const next = !voiceOn;
-              setVoiceOn(next);
               voiceOnRef.current = next;
+              setPrefs({ voice: next });
               if (!next) stopSpeaking();
             }}
             aria-pressed={voiceOn}
@@ -1208,7 +1219,7 @@ export function HoldCoach({
                 <p className="mt-0.5">
                   Set the camera at about hip height and step back until your whole body is on screen, in good light.
                 </p>
-                <p className="mt-1.5 font-mono text-[10px] text-white/55">{diag}</p>
+                {debug && <p className="mt-1.5 font-mono text-[10px] text-white/55">{diag}</p>}
                 <a href="/camera-check" className="mt-1.5 inline-block font-bold text-mint underline underline-offset-2">
                   Still nothing? Run a camera check
                 </a>

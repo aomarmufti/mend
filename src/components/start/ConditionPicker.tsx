@@ -23,7 +23,7 @@ export function ConditionPicker({ conditions, adding }: { conditions: Condition[
             type="button"
             onClick={() =>
               ready
-                ? router.push(`/start/pain?c=${condition.slug}${adding ? "&add=1" : ""}`)
+                ? router.push(`/start/screen?c=${condition.slug}${adding ? "&add=1" : ""}`)
                 : toggleNotifyArea(key)
             }
             className="block w-full text-left"

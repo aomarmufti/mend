@@ -3,6 +3,7 @@
 import { useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { DeviceFrame } from "@/components/DeviceFrame";
+import { ConsentGate } from "@/components/legal/ConsentGate";
 
 const noopSubscribe = () => () => {};
 
@@ -29,12 +30,16 @@ export function ShellChrome({ children }: { children: React.ReactNode }) {
   const isFocusedFlow = pathname?.startsWith("/session") || pathname?.startsWith("/coach");
 
   if (isFocusedFlow) {
-    return <div className="min-h-screen">{children}</div>;
+    return (
+      <div className="min-h-screen">
+        <ConsentGate>{children}</ConsentGate>
+      </div>
+    );
   }
 
   return (
     <div className={framed ? "min-h-screen py-10" : "min-h-screen"}>
-      {framed ? <DeviceFrame>{children}</DeviceFrame> : children}
+      <ConsentGate>{framed ? <DeviceFrame>{children}</DeviceFrame> : children}</ConsentGate>
 
       {showToggle && (
       <button

@@ -11,6 +11,8 @@ import type { CoachResult } from "@/components/coach/HoldCoach";
 import { PainCheckIn } from "@/components/today/PainCheckIn";
 import { Card, ProgressBar, btnPrimary, eyebrow } from "@/components/ui/kit";
 import { useHydrated } from "@/lib/profile";
+import { logPain } from "@/lib/localSession";
+import { shouldStop } from "@/lib/safety";
 import { useActivePlan, type ActivePlan } from "@/lib/usePlan";
 import { doneToday, useAllRecords } from "@/lib/progress";
 import { LogoMark } from "@/components/brand/Logo";
@@ -47,12 +49,17 @@ function Session({ active, doneSlugs }: { active: ActivePlan; doneSlugs: Set<str
   const [running, setRunning] = useState<null | "camera" | "manual">(null);
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [painLogged, setPainLogged] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [midPain, setMidPain] = useState(3);
 
   const advance = (result: CoachResult | null) => {
     const exercise = list[index];
     setOutcomes((o) => [...o, { exercise, result }]);
     setRunning(null);
     setIndex((i) => i + 1);
+    // A quick pain check between exercises, but not after the last one: the
+    // end-of-session check-in covers that.
+    if (result && result.reps > 0 && index + 1 < list.length) setAsking(true);
     window.scrollTo(0, 0);
   };
 
@@ -102,6 +109,78 @@ function Session({ active, doneSlugs }: { active: ActivePlan; doneSlugs: Set<str
           See your progress
         </Link>
         <LogoMark className="mx-auto mt-6 h-5 w-5 text-ink/30" />
+      </div>
+    );
+  }
+
+  if (asking) {
+    const stop = shouldStop(midPain);
+    return (
+      <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col px-5 pt-[calc(2.5rem+env(safe-area-inset-top))] pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
+        <p className={eyebrow}>Quick check</p>
+        <h1 className="mt-1 font-display text-3xl font-extrabold">How does it feel?</h1>
+        <Card className="mt-5">
+          <div className="flex items-baseline justify-between">
+            <span className="font-sans text-sm font-bold">Pain right now</span>
+            <span className="font-display text-3xl font-extrabold text-mint-deep">
+              {midPain}
+              <span className="text-sm text-ink/35">/10</span>
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={10}
+            value={midPain}
+            onChange={(e) => setMidPain(Number(e.target.value))}
+            className="mt-3 w-full accent-[#2FA67F]"
+            aria-label="Pain level, 0 to 10"
+          />
+        </Card>
+        {stop && (
+          <Card className="mt-3 bg-white">
+            <p className="font-sans text-sm font-extrabold">Stop for today</p>
+            <p className="mt-1 font-sans text-xs leading-relaxed text-ink/70">
+              Pain this high is a sign to rest. Take it easy and try again tomorrow. If it doesn&apos;t settle, speak to a clinician.
+            </p>
+          </Card>
+        )}
+        <div className="flex-1" />
+        {stop ? (
+          <>
+            <button
+              type="button"
+              className={btnPrimary}
+              onClick={() => {
+                logPain(midPain);
+                router.push("/today");
+              }}
+            >
+              Stop and rest
+            </button>
+            <button
+              type="button"
+              className="mt-3 text-center font-sans text-xs font-bold text-ink/55"
+              onClick={() => {
+                logPain(midPain);
+                setAsking(false);
+              }}
+            >
+              Carry on anyway
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className={btnPrimary}
+            onClick={() => {
+              logPain(midPain);
+              setAsking(false);
+            }}
+          >
+            Continue
+          </button>
+        )}
       </div>
     );
   }

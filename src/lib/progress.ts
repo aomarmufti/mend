@@ -45,14 +45,49 @@ export function trainedDays(records: ExerciseRecord[], completed: string[]): Set
 
 /** Consecutive trained days ending today, or yesterday if today is not done yet. */
 export function streakFrom(days: Set<string>, today = new Date()): number {
+  return streakDetail(days, today).count;
+}
+
+/**
+ * The streak with one rest day forgiven. A single missed day between two
+ * trained days does not break it, and a forgiven day is not counted. The
+ * allowance comes back after seven trained days, so a bad week can't wipe out
+ * a month of work but a pattern of skipping still ends the streak.
+ */
+export function streakDetail(days: Set<string>, today = new Date()): { count: number; protectedDay: boolean } {
   const cursor = new Date(today);
   if (!days.has(localDateKey(cursor))) cursor.setDate(cursor.getDate() - 1);
-  let n = 0;
-  while (days.has(localDateKey(cursor))) {
-    n += 1;
+  let count = 0;
+  let sinceForgiven = 7;
+  let protectedDay = false;
+  while (true) {
+    if (days.has(localDateKey(cursor))) {
+      count += 1;
+      sinceForgiven += 1;
+      cursor.setDate(cursor.getDate() - 1);
+      continue;
+    }
+    const before = new Date(cursor);
+    before.setDate(before.getDate() - 1);
+    if (count > 0 && sinceForgiven >= 7 && days.has(localDateKey(before))) {
+      protectedDay = true;
+      sinceForgiven = 0;
+      cursor.setDate(cursor.getDate() - 1);
+      continue;
+    }
+    break;
+  }
+  return { count, protectedDay };
+}
+
+/** Whole days since the last trained day, or null if there is none. */
+export function daysSinceTrained(days: Set<string>, today = new Date()): number | null {
+  const cursor = new Date(today);
+  for (let i = 0; i < 400; i++) {
+    if (days.has(localDateKey(cursor))) return i;
     cursor.setDate(cursor.getDate() - 1);
   }
-  return n;
+  return null;
 }
 
 export interface WeekDay {

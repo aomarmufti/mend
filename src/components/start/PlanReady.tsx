@@ -93,13 +93,8 @@ export function PlanReady({ conditionSlug, adding }: { conditionSlug: string; ad
           <p className="font-sans text-sm font-extrabold">
             {trialUsed ? "Your free trial has ended" : `Try it free for ${TRIAL_DAYS} days`}
           </p>
-          <p className="mt-1 mb-2 font-sans text-xs leading-relaxed text-ink/60">
+          <p className="mt-1 font-sans text-xs leading-relaxed text-ink/60">
             Every plan, live camera coaching and your full progress history.
-          </p>
-          <p className="font-sans text-[11px] leading-relaxed text-ink/50">
-            Then [price to be set] a month.
-            <br />
-            Cancel any time. 12 week guarantee, see terms.
           </p>
         </Card>
       )}
