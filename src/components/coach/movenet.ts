@@ -17,9 +17,9 @@ import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
  */
 
 /**
- * Thunder is the more accurate model (256 px input, ~12 MB); Lightning is the
- * lighter one (192 px, ~4.6 MB) for slow devices. Rehab angles depend on knees
- * and ankles being in the right place, so accuracy is the default.
+ * Lightning is the fast model (192 px input, ~4.6 MB); Thunder is the more
+ * accurate one (256 px, ~12 MB) but noticeably slower. On Safari, Thunder was
+ * laggy enough that the coach could not keep up, so Lightning is the default.
  */
 export type MoveNetVariant = "thunder" | "lightning";
 const VARIANTS: Record<MoveNetVariant, { url: string; input: number }> = {
@@ -27,9 +27,9 @@ const VARIANTS: Record<MoveNetVariant, { url: string; input: number }> = {
   lightning: { url: "/models/movenet/movenet-lightning.json", input: 192 },
 };
 
-/** ?model=lightning picks the lighter model; anything else, the accurate one. */
+/** ?model=thunder picks the slower, more accurate model; anything else, the fast one. */
 export function chooseVariant(search: string): MoveNetVariant {
-  return new URLSearchParams(search).get("model") === "lightning" ? "lightning" : "thunder";
+  return new URLSearchParams(search).get("model") === "thunder" ? "thunder" : "lightning";
 }
 
 /** MoveNet keypoint order -> MediaPipe pose landmark index. */
@@ -42,11 +42,56 @@ const MIN_SEEN = 8;
 /** Crop margin around the person, as a multiple of their larger dimension. */
 const CROP_MARGIN = 1.35;
 
+/**
+ * One Euro filter: heavy smoothing while a value is steady, little while it is
+ * moving fast, so a still body does not shimmer and a moving one does not lag.
+ * MediaPipe smooths its landmarks internally; MoveNet's raw keypoints do not,
+ * and a few pixels of shimmer read as "moving" to the stillness check.
+ */
+export class OneEuro {
+  private lastT: number | null = null;
+  private prev = 0;
+  private xHat = 0;
+  private dxHat = 0;
+  constructor(
+    private minCutoff = 0.3,
+    private beta = 8,
+    private dCutoff = 1,
+  ) {}
+
+  reset(): void {
+    this.lastT = null;
+  }
+
+  private static alpha(dt: number, cutoff: number): number {
+    const tau = 1 / (2 * Math.PI * cutoff);
+    return 1 / (1 + tau / dt);
+  }
+
+  filter(value: number, tSec: number): number {
+    if (this.lastT === null) {
+      this.lastT = tSec;
+      this.prev = value;
+      this.xHat = value;
+      this.dxHat = 0;
+      return value;
+    }
+    const dt = Math.max(1e-3, tSec - this.lastT);
+    this.lastT = tSec;
+    const dRaw = (value - this.prev) / dt;
+    this.prev = value;
+    this.dxHat += OneEuro.alpha(dt, this.dCutoff) * (dRaw - this.dxHat);
+    const cutoff = this.minCutoff + this.beta * Math.abs(this.dxHat);
+    this.xHat += OneEuro.alpha(dt, cutoff) * (value - this.xHat);
+    return this.xHat;
+  }
+}
+
 export interface MoveNetDetector {
   /** Which TensorFlow.js backend ended up in use: "webgl" or the "cpu" fallback. */
   backend: string;
   /** Landmarks for the person in this frame, or null when no one is there. */
-  detect(frame: HTMLCanvasElement): Promise<NormalizedLandmark[] | null>;
+  detect(frame: HTMLCanvasElement | HTMLVideoElement): Promise<NormalizedLandmark[] | null>;
   close(): void;
 }
 
@@ -66,7 +111,7 @@ function visibilityOf(score: number): number {
   return score >= SEEN ? Math.min(1, 0.55 + score * 0.45) : score * 1.5;
 }
 
-export async function createMoveNet(variant: MoveNetVariant = "thunder"): Promise<MoveNetDetector> {
+export async function createMoveNet(variant: MoveNetVariant = "lightning"): Promise<MoveNetDetector> {
   const { url: MODEL_URL, input: INPUT } = VARIANTS[variant];
   const tf = await import("@tensorflow/tfjs-core");
   await import("@tensorflow/tfjs-backend-webgl");
@@ -88,6 +133,19 @@ export async function createMoveNet(variant: MoveNetVariant = "thunder"): Promis
 
   const model = await loadGraphModel(MODEL_URL);
 
+  // The first runs compile the GPU shaders, which can take a second or more and
+  // would otherwise land on the user's first frames as a long freeze. Do it now,
+  // while the screen still says the model is loading.
+  for (let i = 0; i < 2; i++) {
+    const blank = tf.zeros([1, INPUT, INPUT, 3], "int32");
+    const warm = model.execute(blank) as import("@tensorflow/tfjs-core").Tensor;
+    await warm.data();
+    warm.dispose();
+    blank.dispose();
+  }
+
+  const smoothers = Array.from({ length: 17 }, () => ({ x: new OneEuro(), y: new OneEuro() }));
+
   const crop = document.createElement("canvas");
   crop.width = INPUT;
   crop.height = INPUT;
@@ -96,9 +154,10 @@ export async function createMoveNet(variant: MoveNetVariant = "thunder"): Promis
 
   let region: Crop | null = null;
 
-  async function detect(frame: HTMLCanvasElement): Promise<NormalizedLandmark[] | null> {
-    const w = frame.width;
-    const h = frame.height;
+  async function detect(frame: HTMLCanvasElement | HTMLVideoElement): Promise<NormalizedLandmark[] | null> {
+    const isVideo = typeof HTMLVideoElement !== "undefined" && frame instanceof HTMLVideoElement;
+    const w = isVideo ? (frame as HTMLVideoElement).videoWidth : (frame as HTMLCanvasElement).width;
+    const h = isVideo ? (frame as HTMLVideoElement).videoHeight : (frame as HTMLCanvasElement).height;
     if (!w || !h) return null;
 
     // First pass: the whole frame as a square, padded. Later passes: the crop.
@@ -139,6 +198,7 @@ export async function createMoveNet(variant: MoveNetVariant = "thunder"): Promis
       z: 0,
       visibility: 0,
     }));
+    const tSec = performance.now() / 1000;
     let seen = 0;
     let minX = Infinity;
     let maxX = -Infinity;
@@ -150,7 +210,19 @@ export async function createMoveNet(variant: MoveNetVariant = "thunder"): Promis
       const score = raw[i * 3 + 2];
       const px = r.x + kx * r.size;
       const py = r.y + ky * r.size;
-      landmarks[TO_MEDIAPIPE[i]] = { x: px / w, y: py / h, z: 0, visibility: visibilityOf(score) };
+      if (score >= SEEN) {
+        landmarks[TO_MEDIAPIPE[i]] = {
+          x: smoothers[i].x.filter(px / w, tSec),
+          y: smoothers[i].y.filter(py / h, tSec),
+          z: 0,
+          visibility: visibilityOf(score),
+        };
+      } else {
+        // A joint that was lost should not glide back from where it was.
+        smoothers[i].x.reset();
+        smoothers[i].y.reset();
+        landmarks[TO_MEDIAPIPE[i]] = { x: px / w, y: py / h, z: 0, visibility: visibilityOf(score) };
+      }
       if (score >= SEEN) {
         seen++;
         minX = Math.min(minX, px);
@@ -163,6 +235,10 @@ export async function createMoveNet(variant: MoveNetVariant = "thunder"): Promis
     if (seen < MIN_SEEN) {
       // No one there, or lost them: look at the whole frame next time.
       region = null;
+      for (const sm of smoothers) {
+        sm.x.reset();
+        sm.y.reset();
+      }
       return null;
     }
 

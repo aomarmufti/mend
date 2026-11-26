@@ -57,6 +57,8 @@ const WASM_BASE_URL = "/mediapipe/wasm";
 const MODEL_URL = "/mediapipe/models/pose_landmarker_lite.task";
 
 const CALIBRATION_FRAMES = 30;
+/** MoveNet reports a few times a second, so fewer readings make the same few seconds. */
+const MOVENET_CALIBRATION_FRAMES = 10;
 const UI_INTERVAL_MS = 100;
 /** After this long, offer to start without a perfect line-up. */
 const LINEUP_ESCAPE_MS = 8_000;
@@ -353,6 +355,13 @@ export function HoldCoach({
   const engineKindRef = useRef<"mediapipe" | "movenet">("mediapipe");
   const moveNetRef = useRef<MoveNetDetector | null>(null);
   const moveNetBusyRef = useRef(false);
+  // Counts MoveNet results. The line-up gate and calibration judge stillness
+  // and average positions, which only means something once per new reading:
+  // run per screen tick on one cached reading, a few pixels of shimmer between
+  // readings looks like fast movement and the countdown never finishes.
+  const detectSeqRef = useRef(0);
+  const gateSeqRef = useRef(-1);
+  const lastGateRef = useRef<{ assessment: ReturnType<typeof assessSetup>; step: ReturnType<typeof stepGate> } | null>(null);
   const flippedRef = useRef(false);
   const detectWidthRef = useRef(DETECT_MAX_WIDTH);
   const rebuildingRef = useRef(false);
@@ -497,7 +506,7 @@ export function HoldCoach({
      * drawing with the latest result while one is in flight, and at most one is
      * ever in flight.
      */
-    function kickMoveNet(frame: HTMLCanvasElement) {
+    function kickMoveNet(frame: HTMLCanvasElement | HTMLVideoElement) {
       const detector = moveNetRef.current;
       if (!detector || moveNetBusyRef.current) return;
       moveNetBusyRef.current = true;
@@ -506,6 +515,7 @@ export function HoldCoach({
         .then((lm) => {
           errorRunRef.current = 0;
           lastLandmarksRef.current = lm;
+          detectSeqRef.current += 1;
           if (lm) {
             hitsRef.current += 1;
             lastSeenRef.current = performance.now();
@@ -695,38 +705,39 @@ export function HoldCoach({
         lastDetectAtRef.current = now;
         framesRef.current += 1;
         try {
-          if (!frameCanvasRef.current) frameCanvasRef.current = document.createElement("canvas");
-          const fc = frameCanvasRef.current;
-          const fw = Math.min(detectWidthRef.current, video.videoWidth);
-          const fh = Math.round((fw * video.videoHeight) / video.videoWidth);
-          if (fc.width !== fw || fc.height !== fh) {
-            fc.width = fw;
-            fc.height = fh;
-          }
-          fc.getContext("2d")?.drawImage(video, 0, 0, fw, fh);
-          if (
-            !useMoveNet &&
-            (simulateRef.current === "mediapipe-fails" ||
-              (simulateRef.current === "video-fails" && modeRef.current === "VIDEO"))
-          ) {
-            throw new Error("simulated MediaPipe failure");
-          }
           if (useMoveNet) {
-            kickMoveNet(fc);
+            // MoveNet crops and scales straight from the video into its own
+            // small canvas, so there is no full-size copy on the way.
+            kickMoveNet(video);
             landmarks = lastLandmarksRef.current;
           } else if (landmarker) {
-          // Whole, strictly increasing milliseconds: two frames can never share
-          // a timestamp, whatever the clock or the frame pacing does.
-          const ts = Math.max(Math.round(now), lastTsRef.current + 1);
-          lastTsRef.current = ts;
-          const result = modeRef.current === "IMAGE" ? landmarker.detect(fc) : landmarker.detectForVideo(fc, ts);
-          landmarks = result.landmarks[0] ?? null;
-          lastLandmarksRef.current = landmarks;
-          errorRunRef.current = 0;
-          if (landmarks) {
-            hitsRef.current += 1;
-            lastSeenRef.current = now;
-          }
+            if (!frameCanvasRef.current) frameCanvasRef.current = document.createElement("canvas");
+            const fc = frameCanvasRef.current;
+            const fw = Math.min(detectWidthRef.current, video.videoWidth);
+            const fh = Math.round((fw * video.videoHeight) / video.videoWidth);
+            if (fc.width !== fw || fc.height !== fh) {
+              fc.width = fw;
+              fc.height = fh;
+            }
+            fc.getContext("2d")?.drawImage(video, 0, 0, fw, fh);
+            if (
+              simulateRef.current === "mediapipe-fails" ||
+              (simulateRef.current === "video-fails" && modeRef.current === "VIDEO")
+            ) {
+              throw new Error("simulated MediaPipe failure");
+            }
+            // Whole, strictly increasing milliseconds: two frames can never
+            // share a timestamp, whatever the clock or the frame pacing does.
+            const ts = Math.max(Math.round(now), lastTsRef.current + 1);
+            lastTsRef.current = ts;
+            const result = modeRef.current === "IMAGE" ? landmarker.detect(fc) : landmarker.detectForVideo(fc, ts);
+            landmarks = result.landmarks[0] ?? null;
+            lastLandmarksRef.current = landmarks;
+            errorRunRef.current = 0;
+            if (landmarks) {
+              hitsRef.current += 1;
+              lastSeenRef.current = now;
+            }
           }
         } catch (err) {
           // One dropped frame is not worth tearing the loop down for, but a
@@ -755,9 +766,19 @@ export function HoldCoach({
       if (phase === "lineup") {
         sampleLuminance(video, now);
         // Ready → still for a moment → 3, 2, 1 → go. Any slip resets it.
-        const assessment = assessSetup(landmarks, { luma: lumaRef.current.value }, aspect, setupSpec);
-        const step = stepGate(gateRef.current, assessment, now);
-        gateRef.current = step.state;
+        let assessment: ReturnType<typeof assessSetup>;
+        let step: ReturnType<typeof stepGate>;
+        const cached = lastGateRef.current;
+        if (useMoveNet && cached && gateSeqRef.current === detectSeqRef.current) {
+          // No new reading since the last step: do not judge stillness again.
+          ({ assessment, step } = cached);
+        } else {
+          assessment = assessSetup(landmarks, { luma: lumaRef.current.value }, aspect, setupSpec);
+          step = stepGate(gateRef.current, assessment, now);
+          gateRef.current = step.state;
+          gateSeqRef.current = detectSeqRef.current;
+          lastGateRef.current = { assessment, step };
+        }
         if (step.go || forceStartRef.current) {
           setStatus("calibrating");
         } else if (voiceOnRef.current) {
@@ -812,6 +833,11 @@ export function HoldCoach({
       // ---- calibrate resting position (only from lined-up frames) ----------
       const b = baselineRef.current;
       if (phase === "calibrating" && landmarks) {
+        if (useMoveNet && gateSeqRef.current === detectSeqRef.current) {
+          drawFrame(canvas, video, landmarks, null, true);
+          return;
+        }
+        gateSeqRef.current = detectSeqRef.current;
         const torso = torsoLengthOf(landmarks, aspect);
         const leftHip = landmarks[LANDMARK.leftHip];
         const rightHip = landmarks[LANDMARK.rightHip];
@@ -825,7 +851,7 @@ export function HoldCoach({
           if (leftAnkle && visibilityOf(leftAnkle) >= 0.5) sums.ankleY.left += leftAnkle.y;
           if (rightAnkle && visibilityOf(rightAnkle) >= 0.5) sums.ankleY.right += rightAnkle.y;
           calibFramesRef.current += 1;
-          if (calibFramesRef.current >= CALIBRATION_FRAMES) {
+          if (calibFramesRef.current >= (useMoveNet ? MOVENET_CALIBRATION_FRAMES : CALIBRATION_FRAMES)) {
             const n = calibFramesRef.current;
             baselineRef.current = {
               hipY: { left: sums.hipY.left / n || null, right: sums.hipY.right / n || null },
