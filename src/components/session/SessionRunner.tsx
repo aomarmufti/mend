@@ -14,7 +14,8 @@ import { useHydrated } from "@/lib/profile";
 import { logPain } from "@/lib/localSession";
 import { shouldStop } from "@/lib/safety";
 import { useActivePlan, type ActivePlan } from "@/lib/usePlan";
-import { doneToday, useAllRecords } from "@/lib/progress";
+import { doneToday, streakDetail, trainedDays, useAllRecords, useCompletedDates } from "@/lib/progress";
+import { NextUp } from "@/components/today/NextUp";
 import { LogoMark } from "@/components/brand/Logo";
 
 export function SessionRunner() {
@@ -49,6 +50,8 @@ function Session({ active, doneSlugs }: { active: ActivePlan; doneSlugs: Set<str
   const [running, setRunning] = useState<null | "camera" | "manual">(null);
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [painLogged, setPainLogged] = useState(false);
+  const allRecords = useAllRecords();
+  const allCompleted = useCompletedDates();
   const [asking, setAsking] = useState(false);
   const [midPain, setMidPain] = useState(3);
 
@@ -65,11 +68,23 @@ function Session({ active, doneSlugs }: { active: ActivePlan; doneSlugs: Set<str
 
   if (index >= list.length) {
     const area = areaLowerLabel(active.shape.areaLabel);
+    const doneCount = outcomes.filter((o) => o.result !== null && o.result.reps > 0).length;
+    const didAny = doneCount > 0;
+    const didAll = didAny && doneCount === outcomes.length;
+    const { count: streak } = streakDetail(trainedDays(allRecords, allCompleted));
     return (
       <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col px-5 pt-[calc(2.5rem+env(safe-area-inset-top))] pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
         <span className="flex h-16 w-16 items-center justify-center rounded-full bg-success-soft text-3xl text-success">✓</span>
-        <h1 className="mt-4 font-display text-3xl font-extrabold">Session complete.</h1>
-        <p className="mt-1 font-sans text-sm text-ink/60">That&apos;s today done. See you tomorrow.</p>
+        <h1 className="mt-4 font-display text-3xl font-extrabold">
+          {didAll ? "Session complete." : didAny ? "Good work today." : "Session ended."}
+        </h1>
+        <p className="mt-1 font-sans text-sm text-ink/60">
+          {didAll
+            ? `${streak > 0 ? `${streak} day streak. ` : ""}That's today done. See you tomorrow.`
+            : didAny
+              ? `${streak > 0 ? `${streak} day streak. ` : ""}${doneCount} of ${outcomes.length} done. You can pick up the rest from Today whenever you like.`
+              : "Nothing was logged this time. Come back when you're ready: even a short session counts."}
+        </p>
 
         <div className="mt-5 grid gap-2">
           {outcomes.map(({ exercise, result }) => {
@@ -100,6 +115,12 @@ function Session({ active, doneSlugs }: { active: ActivePlan; doneSlugs: Set<str
             <PainCheckIn area={area} onDone={() => setPainLogged(true)} />
           )}
         </div>
+
+        {didAny && (
+          <div className="mt-4">
+            <NextUp active={active} />
+          </div>
+        )}
 
         <div className="flex-1" />
         <Link href="/today" className={`${btnPrimary} mt-6`}>

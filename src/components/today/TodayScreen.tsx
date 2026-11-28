@@ -5,6 +5,8 @@ import { useState } from "react";
 import { Card, Pill, btnPrimary, btnSecondary, eyebrow } from "@/components/ui/kit";
 import { Greeting } from "@/components/today/Greeting";
 import { PainCheckIn } from "@/components/today/PainCheckIn";
+import { NextUp } from "@/components/today/NextUp";
+import { ExerciseRow } from "@/components/plan/ExerciseRow";
 import { areaLowerLabel, sessionMinutes } from "@/data/catalog";
 import { entitlement, reminderLabel, trialDaysLeft, useProfile } from "@/lib/profile";
 import { useActivePlan } from "@/lib/usePlan";
@@ -132,6 +134,17 @@ export function TodayScreen() {
         </div>
       </Card>
 
+      {records.length === 0 && completed.length === 0 && usable.length > 0 && (
+        <Card className="bg-white p-4">
+          <p className="font-sans text-sm font-extrabold">Welcome to your plan</p>
+          <ol className="mt-1.5 list-decimal space-y-1 pl-4 font-sans text-xs text-ink/65">
+            <li>Do today&apos;s session below. It takes about {sessionMinutes(usable)} minutes.</li>
+            <li>Tell us how your {area} feels. That&apos;s how we track your progress.</li>
+            <li>Come back tomorrow. A short session each day builds your streak and your results.</li>
+          </ol>
+        </Card>
+      )}
+
       <Card>
         <p className={eyebrow}>Today</p>
         <p className="mt-0.5 font-display text-lg font-extrabold">{active.shape.areaLabel} plan</p>
@@ -146,7 +159,14 @@ export function TodayScreen() {
           </>
         ) : finished ? (
           <>
-            <p className="font-sans text-sm text-ink/60">Done for today. Nice work.</p>
+            <p className="font-sans text-sm font-bold text-success">
+              Done for today{streak > 0 ? `. ${streak} day streak` : ""}. Nice work.
+            </p>
+            <div className="mt-2 flex flex-col gap-2">
+              {usable.map((e) => (
+                <ExerciseRow key={e.slug} exercise={e} done locked={false} />
+              ))}
+            </div>
             <Link href="/session" className={`${btnSecondary} mt-3`}>
               Go again
             </Link>
@@ -154,10 +174,14 @@ export function TodayScreen() {
         ) : (
           <>
             <p className="font-sans text-sm text-ink/60">
-              {remaining.length} {remaining.length === 1 ? "exercise" : "exercises"}, about{" "}
-              {sessionMinutes(remaining)} minutes
+              {usable.length - remaining.length} of {usable.length} done · about {sessionMinutes(remaining)} minutes left
               {active.shape.staged ? ` · ${active.plan.stage} stage` : ""}
             </p>
+            <div className="mt-2 flex flex-col gap-2">
+              {usable.map((e) => (
+                <ExerciseRow key={e.slug} exercise={e} done={done.has(e.slug)} locked={false} />
+              ))}
+            </div>
             <Link href="/session" className={`${btnPrimary} mt-3`}>
               {remaining.length < usable.length ? "Continue session" : "Start session"}
             </Link>
@@ -173,6 +197,8 @@ export function TodayScreen() {
         )}
       </Card>
 
+      {finished && <NextUp active={active} />}
+
       {painOpen ? (
         <PainCheckIn area={area} onDone={() => setPainOpen(false)} />
       ) : (
@@ -186,7 +212,19 @@ export function TodayScreen() {
 
       {(profile.reminder || left !== null) && (
         <p className="pt-1 text-center font-sans text-[11px] text-ink/45">
-          {profile.reminder ? `Reminder at ${reminderLabel(profile.reminder)}` : ""}
+          {profile.reminder ? (
+            <>
+              Reminder at {reminderLabel(profile.reminder)}{" "}
+              <a
+                href={`/api/reminder?time=${encodeURIComponent(profile.reminder)}&label=${encodeURIComponent(active.shape.areaLabel)}&mins=${sessionMinutes(usable)}&d=${localDateKey(new Date())}`}
+                className="font-bold text-mint-deep underline"
+              >
+                Add to calendar
+              </a>
+            </>
+          ) : (
+            ""
+          )}
           {profile.reminder && left !== null ? " · " : ""}
           {left !== null ? (left > 0 ? `${left} days left in your trial` : "Trial ended") : ""}
         </p>

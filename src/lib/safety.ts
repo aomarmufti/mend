@@ -26,6 +26,29 @@ export function shouldStop(pain: number): boolean {
   return pain >= STOP_PAIN;
 }
 
+/** To suggest moving up a stage: pain this low on the last three check-ins... */
+export const MOVE_UP_PAIN_MAX = 3;
+/** ...and training on at least this many of the last 14 days. */
+export const MOVE_UP_DAYS = 8;
+
+export interface StageReadiness {
+  /** The latest pain check-ins, oldest first, at most three. */
+  lastPain: number[];
+  painOk: boolean;
+  trained: number;
+  daysOk: boolean;
+  /** Both conditions met. */
+  ready: boolean;
+}
+
+/** How close someone is to being suggested the next stage, for showing them. */
+export function stageReadiness({ pain, trainedLast14 }: Pick<ProgressionInput, "pain" | "trainedLast14">): StageReadiness {
+  const lastPain = pain.slice(-3).map((p) => p.value);
+  const painOk = lastPain.length === 3 && lastPain.every((v) => v <= MOVE_UP_PAIN_MAX);
+  const daysOk = trainedLast14 >= MOVE_UP_DAYS;
+  return { lastPain, painOk, trained: trainedLast14, daysOk, ready: painOk && daysOk };
+}
+
 export type Suggestion =
   | { kind: "step-back"; to: Stage; reason: string }
   | { kind: "progress"; to: Stage; reason: string }
@@ -56,9 +79,7 @@ export function suggestStage({ stage, pain, trainedLast14 }: ProgressionInput): 
     return { kind: "step-back", to: stageOrder[i - 1], reason: "Your pain has flared up. Going back a stage lets it settle." };
   }
 
-  const lastThree = pain.slice(-3).map((p) => p.value);
-  const calm = lastThree.length === 3 && lastThree.every((v) => v <= 3);
-  if (calm && trainedLast14 >= 8 && i < stageOrder.length - 1) {
+  if (stageReadiness({ pain, trainedLast14 }).ready && i < stageOrder.length - 1) {
     return { kind: "progress", to: stageOrder[i + 1], reason: "Your pain is low and you have been training regularly." };
   }
   return null;

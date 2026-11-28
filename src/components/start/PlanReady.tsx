@@ -72,6 +72,10 @@ export function PlanReady({ conditionSlug, adding }: { conditionSlug: string; ad
         />
       </Card>
 
+      <p className="mt-1.5 px-1 font-sans text-[11px] text-ink/45">
+        After your first session you can add a daily event at this time to your phone&apos;s calendar.
+      </p>
+
       {!profile.account ? (
         <Card className="mt-2.5">
           <p className="font-sans text-sm font-extrabold">Sign in to save your plan</p>
