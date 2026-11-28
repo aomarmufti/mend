@@ -91,3 +91,26 @@ export function CheckIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+export function SpeakerIcon({ className, muted = false }: IconProps & { muted?: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M4 9.5h3.2L12 5.5v13l-4.8-4H4v-5Z"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinejoin="round"
+      />
+      {muted ? (
+        <path d="m16 9.5 5 5m0-5-5 5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      ) : (
+        <path
+          d="M15.5 9.2a4 4 0 0 1 0 5.6M18 6.8a7.5 7.5 0 0 1 0 10.4"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+        />
+      )}
+    </svg>
+  );
+}

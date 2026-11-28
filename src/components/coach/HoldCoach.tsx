@@ -51,6 +51,7 @@ import { markCompletedToday } from "@/lib/localSession";
 import { setPrefs, usePrefs } from "@/lib/prefs";
 import { VOICE, stopSpeaking, tone } from "@/components/coach/coachVoice";
 import { Pill, Ring, btnPrimary } from "@/components/ui/kit";
+import { SpeakerIcon } from "@/components/icons";
 
 // Self-hosted so the coach works on a weak connection or none at all, and
 // so starting a health activity does not hand a third-party CDN the user's IP.
@@ -1154,7 +1155,7 @@ export function HoldCoach({
             aria-label={voiceOn ? "Mute voice" : "Turn voice on"}
             className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-sm backdrop-blur"
           >
-            {voiceOn ? "🔊" : "🔇"}
+            <SpeakerIcon className="h-5 w-5" muted={!voiceOn} />
           </button>
         </div>
 
