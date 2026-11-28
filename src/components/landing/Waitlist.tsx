@@ -15,7 +15,7 @@ export function Waitlist() {
       const res = await fetch("/api/waitlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, source: new URLSearchParams(window.location.search).get("src") ?? "" }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (res.ok) {

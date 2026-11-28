@@ -59,9 +59,15 @@ export default function LandingPage() {
           your device. <Link href="/privacy" className="font-bold underline underline-offset-4">Read the privacy policy</Link>.
         </p>
 
-        <h2 className="mt-14 font-display text-2xl font-extrabold">Get early access</h2>
-        <p className="mt-2 mb-4 text-sm text-white/70">Leave your email and we&apos;ll tell you when the iPhone app is ready.</p>
-        <Waitlist />
+        <section id="waitlist" className="scroll-mt-6">
+          <h2 className="mt-14 font-display text-2xl font-extrabold">Get early access</h2>
+          <p className="mt-2 mb-4 text-sm text-white/70">Leave your email and we&apos;ll tell you when the iPhone app is ready.</p>
+          <Waitlist />
+          <p className="mt-3 text-xs leading-relaxed text-white/50">
+            We&apos;ll only use your email to tell you about the app. Ask us to remove it any time:{" "}
+            <a href="mailto:hello@reknit.co.uk" className="underline">hello@reknit.co.uk</a>.
+          </p>
+        </section>
 
         <p className="mt-12 text-xs leading-relaxed text-white/50">
           Reknit supports general exercise and is not a medical device or a substitute for medical advice.
