@@ -47,6 +47,7 @@ import type { MoveNetDetector } from "@/components/coach/movenet";
 import { getDemo } from "@/components/coach/exerciseDemos";
 import { logExercise, type SetDetail } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
+import { isIOS } from "@/lib/device";
 import { markCompletedToday } from "@/lib/localSession";
 import { setPrefs, usePrefs } from "@/lib/prefs";
 import { VOICE, stopSpeaking, tone } from "@/components/coach/coachVoice";
@@ -635,12 +636,53 @@ export function HoldCoach({
       try {
         const params = new URLSearchParams(window.location.search);
         const webkit = isWebKit();
-        // WebKit (Safari, and every iPhone and iPad web view) goes straight to
-        // MoveNet: MediaPipe's WebAssembly build has been seen trapping in the
-        // allocator there, and skipping it also saves loading ~11 MB of wasm.
-        // ?engine=movenet|mediapipe overrides this to try a device each way.
         const want = params.get("engine");
-        if (want === "movenet" || (webkit && want !== "mediapipe")) {
+        // iPhone and iPad: MediaPipe on its CPU delegate. A camera-check report from an
+        // iPhone 16 showed the GPU path taking ~15 s to produce its first frame, while the
+        // CPU path started in ~140 ms and ran at ~16 ms a frame, with no allocator trap. If
+        // it fails to load, the coach falls back to MoveNet below.
+        const iosAuto = webkit && isIOS() && !want;
+        // Other WebKit (desktop Safari) goes straight to MoveNet: MediaPipe's WebAssembly
+        // build has been seen trapping in the allocator there, and skipping it also saves
+        // loading ~11 MB of wasm. ?engine=movenet|mediapipe overrides this to try a device
+        // each way.
+        const useMoveNet = want === "movenet" || (webkit && want !== "mediapipe" && !iosAuto);
+        let usedMediaPipe = false;
+        if (!useMoveNet) {
+          try {
+            const { PoseLandmarker } = await import("@mediapipe/tasks-vision");
+            visionRef = { PoseLandmarker };
+            // Off WebKit, MediaPipe runs on the GPU model with the SIMD build, as
+            // before. URL switches (?delegate=cpu|gpu, ?wasm=simd|nosimd,
+            // ?mode=image) let a device be tried each way without a rebuild.
+            const delegateParam = params.get("delegate");
+            const engine: Engine = {
+              delegate: delegateParam === "cpu" || (iosAuto && delegateParam !== "gpu") ? "CPU" : "GPU",
+              mode: params.get("mode") === "image" ? "IMAGE" : "VIDEO",
+              wasm: params.get("wasm") === "nosimd" ? "nosimd" : "simd",
+            };
+            const { landmarker, delegate } = await createLandmarker(
+              filesetFor(engine.wasm),
+              PoseLandmarker,
+              engine.delegate,
+              engine.mode,
+            );
+            if (cancelled) {
+              landmarker.close();
+              return;
+            }
+            landmarkerRef.current = landmarker;
+            delegateRef.current = delegate;
+            modeRef.current = engine.mode;
+            wasmRef.current = engine.wasm;
+            usedMediaPipe = true;
+          } catch (err) {
+            if (!iosAuto) throw err;
+            console.warn("[coach] MediaPipe failed to start on this iPhone, using MoveNet", err);
+            visionRef = null;
+          }
+        }
+        if (!usedMediaPipe) {
           const { createMoveNet, chooseVariant } = await import("@/components/coach/movenet");
           const detector = await createMoveNet(chooseVariant(window.location.search));
           if (cancelled) {
@@ -649,31 +691,6 @@ export function HoldCoach({
           }
           moveNetRef.current = detector;
           engineKindRef.current = "movenet";
-        } else {
-          const { PoseLandmarker } = await import("@mediapipe/tasks-vision");
-          visionRef = { PoseLandmarker };
-          // Off WebKit, MediaPipe runs on the GPU model with the SIMD build, as
-          // before. URL switches (?delegate=cpu|gpu, ?wasm=simd|nosimd,
-          // ?mode=image) let a device be tried each way without a rebuild.
-          const engine: Engine = {
-            delegate: params.get("delegate") === "cpu" ? "CPU" : "GPU",
-            mode: params.get("mode") === "image" ? "IMAGE" : "VIDEO",
-            wasm: params.get("wasm") === "nosimd" ? "nosimd" : "simd",
-          };
-          const { landmarker, delegate } = await createLandmarker(
-            filesetFor(engine.wasm),
-            PoseLandmarker,
-            engine.delegate,
-            engine.mode,
-          );
-          if (cancelled) {
-            landmarker.close();
-            return;
-          }
-          landmarkerRef.current = landmarker;
-          delegateRef.current = delegate;
-          modeRef.current = engine.mode;
-          wasmRef.current = engine.wasm;
         }
       } catch (err) {
         if (cancelled) return;

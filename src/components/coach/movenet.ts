@@ -111,6 +111,19 @@ function visibilityOf(score: number): number {
   return score >= SEEN ? Math.min(1, 0.55 + score * 0.45) : score * 1.5;
 }
 
+/**
+ * Downloads and parses the TensorFlow.js code without starting anything, so the
+ * coach opens faster. Safe to call more than once and to ignore failures.
+ */
+export async function warmMoveNet(): Promise<void> {
+  await Promise.all([
+    import("@tensorflow/tfjs-core"),
+    import("@tensorflow/tfjs-backend-webgl"),
+    import("@tensorflow/tfjs-backend-cpu"),
+    import("@tensorflow/tfjs-converter"),
+  ]);
+}
+
 export async function createMoveNet(variant: MoveNetVariant = "lightning"): Promise<MoveNetDetector> {
   const { url: MODEL_URL, input: INPUT } = VARIANTS[variant];
   const tf = await import("@tensorflow/tfjs-core");
