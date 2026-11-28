@@ -896,6 +896,7 @@ export function HoldCoach({
           lastGateRef.current = { assessment, step };
         }
         if (step.go || forceStartRef.current) {
+          if (voiceOnRef.current) VOICE.inPositionToStart();
           setStatus("calibrating");
         } else if (voiceOnRef.current) {
           const last = spokenLineupRef.current;
@@ -1314,7 +1315,7 @@ export function HoldCoach({
           <>
             <div className="mx-auto mt-4 rounded-full bg-white px-4 py-2.5 font-sans text-sm font-extrabold text-ink shadow-[0_8px_24px_rgba(0,0,0,.25)]">
               {status === "calibrating"
-                ? "Hold still…"
+                ? "✓ Awesome, you're in position"
                 : ui.count !== null
                   ? "Perfect, starting in…"
                   : gotYou
@@ -1376,7 +1377,7 @@ export function HoldCoach({
               </div>
             )}
             <p className="mt-2.5 text-center font-sans text-xs text-white/85">
-              {status === "calibrating" ? "Finding your resting position" : config.setupHint}
+              {status === "calibrating" ? "Starting your first hold…" : config.setupHint}
             </p>
             {status === "lineup" && ui.lineupMs > LINEUP_ESCAPE_MS && (
               <div className="mt-2 flex justify-center gap-5">

@@ -118,7 +118,7 @@ export const VOICE = {
   lineUp: (instruction: string) => speak(instruction.replace(/[↓↑]/g, "").trim()),
   inPositionToStart: () => {
     tone(660, 120);
-    speak("Great, you're in position. Hold still a moment.");
+    speak("Awesome, you're in position.");
   },
   releasedEarly: () => {
     tone(320, 220);

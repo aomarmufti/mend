@@ -95,4 +95,19 @@ t('gate: walking about during the count restarts steadying', () => {
   const moved = assessSetup(figure({ cx: 0.62 }), lit, A); // jumped 0.12 in 100ms
   s = stepGate(g, moved, 800); assert.equal(s.count, null); assert.equal(s.hint, 'hold-still');
 });
+t('gate: a quad-stretch wobble (foot swinging, torso swaying) does not cancel the count', () => {
+  // Bounding-box centre jumps because the foot moves; the torso only sways.
+  const wob = (feetDx, torsoDx) => ({ ready: true, hint: 'ready', checks: [], centre: { x: 0.5 + feetDx, y: 0.5 }, anchor: { x: 0.5 + torsoDx, y: 0.5 } });
+  let g = initialGate; let s = stepGate(g, wob(0, 0), 0); g = s.state;
+  s = stepGate(g, wob(0, 0), 700); g = s.state; assert.equal(s.count, 3);
+  s = stepGate(g, wob(0.1, 0.01), 800); g = s.state; assert.equal(s.count, 3);
+  s = stepGate(g, wob(-0.08, 0.02), 900); g = s.state; assert.equal(s.count, 3);
+  s = stepGate(g, wob(0.1, 0.01), 3800); assert.equal(s.go, true);
+});
+t('gate: the torso stepping sideways during the count still cancels it', () => {
+  const at = (x) => ({ ready: true, hint: 'ready', checks: [], centre: { x, y: 0.5 }, anchor: { x, y: 0.5 } });
+  let g = initialGate; let s = stepGate(g, at(0.5), 0); g = s.state;
+  s = stepGate(g, at(0.5), 700); g = s.state; assert.equal(s.count, 3);
+  s = stepGate(g, at(0.62), 800); assert.equal(s.count, null); assert.equal(s.hint, 'hold-still');
+});
 console.log(`${n}/${n} setup-check cases pass`);
