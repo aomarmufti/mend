@@ -6,6 +6,9 @@ import { Card, Pill, btnPrimary, btnSecondary, eyebrow } from "@/components/ui/k
 import { Greeting } from "@/components/today/Greeting";
 import { PainCheckIn } from "@/components/today/PainCheckIn";
 import { NextUp } from "@/components/today/NextUp";
+import { HomeScreenTip } from "@/components/today/HomeScreenTip";
+import { DemoBanner } from "@/components/DemoBanner";
+import { milestoneFor } from "@/lib/milestones";
 import { ExerciseRow } from "@/components/plan/ExerciseRow";
 import { areaLowerLabel, sessionMinutes } from "@/data/catalog";
 import { entitlement, reminderLabel, trialDaysLeft, useProfile } from "@/lib/profile";
@@ -75,6 +78,14 @@ export function TodayScreen() {
           {streak > 0 ? `${streak} day streak${protectedDay ? " · rest day kept" : ""}` : "Start a streak"}
         </Pill>
       </div>
+
+      <DemoBanner />
+
+      {finished && milestoneFor(streak) && (
+        <Card className="bg-success-soft p-4">
+          <p className="font-sans text-sm font-extrabold text-success">{milestoneFor(streak)!.line}</p>
+        </Card>
+      )}
 
       {suggestion && (
         <Card className="bg-white p-4">
@@ -198,6 +209,8 @@ export function TodayScreen() {
       </Card>
 
       {finished && <NextUp active={active} />}
+
+      {records.length > 0 && <HomeScreenTip />}
 
       {painOpen ? (
         <PainCheckIn area={area} onDone={() => setPainOpen(false)} />

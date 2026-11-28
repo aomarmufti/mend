@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useProfile } from "@/lib/profile";
 import { areaLowerLabel } from "@/data/catalog";
 import { planFor } from "@/data/catalog";
+import { useDemoActive } from "@/lib/demoData";
 import { counts, painChange, trainedDays, useAllRecords, useCompletedDates, usePainEntries } from "@/lib/progress";
 
 const DATE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -20,6 +21,7 @@ export default function ReportPage() {
   const completed = useCompletedDates();
   const days = [...trainedDays(records, completed)].sort();
   const change = painChange(pain);
+  const demo = useDemoActive();
 
   const exercises = new Map<string, number>();
   for (const r of records) if (counts(r)) exercises.set(r.exerciseName, (exercises.get(r.exerciseName) ?? 0) + 1);
@@ -37,6 +39,11 @@ export default function ReportPage() {
 
       <h1 className="mt-4 font-display text-3xl font-extrabold">Reknit progress report</h1>
       <p className="mt-1 text-sm text-ink/60">Created {DATE.format(new Date())}. Self-reported and device-measured; not a clinical assessment.</p>
+      {demo && (
+        <p className="mt-2 rounded-xl bg-amber-soft px-3 py-2 text-sm font-bold text-amber">
+          This report includes sample data added for a demonstration.
+        </p>
+      )}
 
       <h2 className="mt-6 font-display text-lg font-extrabold">Plans</h2>
       {profile.plans.length === 0 ? (

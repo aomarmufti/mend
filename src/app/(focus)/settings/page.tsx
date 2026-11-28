@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { btnSecondary, Card } from "@/components/ui/kit";
 import { useConsent } from "@/lib/consent";
 import { setPrefs, usePrefs } from "@/lib/prefs";
+import { addDemoHistory, removeDemoHistory, useDemoActive } from "@/lib/demoData";
+import { useAllRecords } from "@/lib/progress";
+import { useActivePlan } from "@/lib/usePlan";
 
 const KEYS_PREFIX = "mend:";
 
@@ -72,6 +75,9 @@ export default function SettingsPage() {
   const router = useRouter();
   const prefs = usePrefs();
   const consent = useConsent();
+  const demo = useDemoActive();
+  const active = useActivePlan();
+  const records = useAllRecords();
 
   const wipe = (message: string) => {
     if (window.confirm(message)) {
@@ -111,6 +117,35 @@ export default function SettingsPage() {
           <span>Slower</span>
           <span>Faster</span>
         </div>
+      </Card>
+
+      <Card className="mt-4 p-5">
+        <h2 className="font-display text-lg font-extrabold">Presenting Reknit?</h2>
+        <p className="mt-2 text-sm text-ink/70">
+          Add five days of sample history so the streak, calendar and pain trend have something to show on a fresh phone.
+          It is always labelled as sample data, never touches today, and can be removed in one tap.
+        </p>
+        {demo ? (
+          <button type="button" className={`${btnSecondary} mt-3 w-full`} onClick={removeDemoHistory}>
+            Remove sample history
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={!active}
+            className={`${btnSecondary} mt-3 w-full disabled:opacity-50`}
+            onClick={() => {
+              if (!active) return;
+              addDemoHistory(
+                active.plan.conditionSlug,
+                active.usable.map((e) => ({ slug: e.slug, name: e.name })),
+                new Set(records.filter((r) => !r.demo).map((r) => r.date)),
+              );
+            }}
+          >
+            {active ? "Add sample history" : "Set up a plan first"}
+          </button>
+        )}
       </Card>
 
       <Card className="mt-4 p-5">

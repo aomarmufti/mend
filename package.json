@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx tests/repCounting.test.mjs && tsx tests/formQuality.test.mjs && tsx tests/setupCheck.test.mjs && tsx tests/heelSlide.test.mjs && tsx tests/progress.test.mjs && tsx tests/newCameraChecks.test.mjs && tsx tests/exerciseDemos.test.mjs && tsx tests/movenetSmoothing.test.mjs && tsx tests/safety.test.mjs && tsx tests/waitlistEmail.test.mjs && tsx tests/calendar.test.mjs",
+    "test": "tsx tests/repCounting.test.mjs && tsx tests/formQuality.test.mjs && tsx tests/setupCheck.test.mjs && tsx tests/heelSlide.test.mjs && tsx tests/progress.test.mjs && tsx tests/newCameraChecks.test.mjs && tsx tests/exerciseDemos.test.mjs && tsx tests/movenetSmoothing.test.mjs && tsx tests/safety.test.mjs && tsx tests/waitlistEmail.test.mjs && tsx tests/calendar.test.mjs && tsx tests/milestones.test.mjs",
     "calibrate": "node scripts/calibrate.mjs",
     "ios:sync": "cap sync ios",
     "ios:open": "cap sync ios && cap open ios",

@@ -113,6 +113,19 @@ export function logPain(value: number) {
   write(log);
 }
 
+/** The pain value logged on a given day, or null. */
+export function painOn(dateKey: string): number | null {
+  const v = read().painLog[dateKey];
+  return v === undefined ? null : v;
+}
+
+/** Forgets the pain value logged on a given day. */
+export function removePainOn(dateKey: string) {
+  const log = read();
+  delete log.painLog[dateKey];
+  write(log);
+}
+
 /** Today's logged pain value, or null if no check-in has been logged yet today. */
 export function todaysPain(): number | null {
   const value = read().painLog[todayKey()];
