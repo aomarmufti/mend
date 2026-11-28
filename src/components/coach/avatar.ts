@@ -377,9 +377,15 @@ export class AvatarAnimator {
     return this.shown;
   }
 
-  draw(ctx: CanvasRenderingContext2D, w: number, h: number, look: AvatarLook, good: boolean) {
-    if (this.shown) drawAvatar(ctx, w, h, this.shown, look, { good, alpha: 0.22 + 0.78 * this.presence });
-    else drawAvatar(ctx, w, h, neutralRig(w, h), look, { good: false, alpha: 0.18 });
+  /** With `scene` false only the figure is drawn, so whatever is behind the canvas shows through. */
+  draw(ctx: CanvasRenderingContext2D, w: number, h: number, look: AvatarLook, good: boolean, scene = true) {
+    if (this.shown) drawAvatar(ctx, w, h, this.shown, look, { good, alpha: 0.22 + 0.78 * this.presence, scene });
+    else if (scene) drawAvatar(ctx, w, h, neutralRig(w, h), look, { good: false, alpha: 0.18 });
+  }
+
+  /** How much of the figure is showing, 0 to 1. */
+  get visible(): number {
+    return this.presence;
   }
 }
 
@@ -433,6 +439,8 @@ export interface DrawOptions {
   good?: boolean;
   /** 0 to 1. The figure fades when nobody is being tracked. */
   alpha?: number;
+  /** Paint the backdrop too. False lays the figure over whatever is already behind the canvas. */
+  scene?: boolean;
 }
 
 function backdrop(ctx: CanvasRenderingContext2D, w: number, h: number, rig: Rig, good: boolean) {
@@ -475,8 +483,8 @@ function backdrop(ctx: CanvasRenderingContext2D, w: number, h: number, rig: Rig,
  * friendly figure rather than a stick drawing.
  */
 export function drawAvatar(ctx: CanvasRenderingContext2D, w: number, h: number, rig: Rig, look: AvatarLook, opts: DrawOptions = {}) {
-  const { good = false, alpha = 1 } = opts;
-  backdrop(ctx, w, h, rig, good);
+  const { good = false, alpha = 1, scene = true } = opts;
+  if (scene) backdrop(ctx, w, h, rig, good);
 
   const T = rig.torso;
   const f = rig.facing;
@@ -580,4 +588,71 @@ export function drawAvatar(ctx: CanvasRenderingContext2D, w: number, h: number, 
   leg(0, false);
   arm(0, false);
   ctx.restore();
+}
+
+
+/**
+ * Hides the real person behind the avatar, like a video-call avatar: the room stays,
+ * the body is replaced. Without a segmentation model this paints a soft, blurred patch of
+ * the camera picture over the body's shape (a thick stroke along the skeleton), which the
+ * figure then sits on. It is cheap (quarter resolution, no canvas filters, so it works in
+ * Safari) and fades with the figure.
+ */
+export class FigureCover {
+  private mask: HTMLCanvasElement | null = null;
+  private tiny: HTMLCanvasElement | null = null;
+
+  paint(ctx: CanvasRenderingContext2D, video: HTMLVideoElement, rig: Rig, w: number, h: number, alpha: number) {
+    if (alpha <= 0.02) return;
+    const k = 4;
+    const mw = Math.max(1, Math.round(w / k));
+    const mh = Math.max(1, Math.round(h / k));
+    const mask = (this.mask ??= document.createElement("canvas"));
+    const tiny = (this.tiny ??= document.createElement("canvas"));
+    if (mask.width !== mw || mask.height !== mh) {
+      mask.width = mw;
+      mask.height = mh;
+    }
+    tiny.width = 10;
+    tiny.height = Math.max(8, Math.round((10 * h) / w));
+    const m = mask.getContext("2d");
+    const t = tiny.getContext("2d");
+    if (!m || !t) return;
+    t.drawImage(video, 0, 0, tiny.width, tiny.height);
+
+    const T = rig.torso;
+    m.clearRect(0, 0, mw, mh);
+    m.globalCompositeOperation = "source-over";
+    m.strokeStyle = "#fff";
+    m.fillStyle = "#fff";
+    m.lineCap = "round";
+    m.lineJoin = "round";
+    const P = (pt: Pt) => [pt.x / k, pt.y / k] as const;
+    const line = (pts: Pt[], width: number) => {
+      m.lineWidth = width / k;
+      m.beginPath();
+      pts.forEach((pt, i) => (i ? m.lineTo(...P(pt)) : m.moveTo(...P(pt))));
+      m.stroke();
+    };
+    line([rig.sh[0], rig.sh[1], rig.hp[1], rig.hp[0], rig.sh[0]], T * 0.62);
+    line([rig.shoulder, rig.hip], T * 0.78);
+    for (const i of [0, 1] as const) {
+      line([rig.sh[i], rig.elbow[i], rig.wrist[i]], T * 0.3);
+      line([rig.hp[i], rig.knee[i], rig.ankle[i], rig.toe[i]], T * 0.34);
+    }
+    m.beginPath();
+    m.arc(...P(rig.head), (rig.headRadius * 1.25) / k, 0, Math.PI * 2);
+    m.fill();
+    // Keep only the camera picture inside that shape.
+    m.globalCompositeOperation = "source-in";
+    m.imageSmoothingEnabled = true;
+    m.imageSmoothingQuality = "high";
+    m.drawImage(tiny, 0, 0, mw, mh);
+
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, alpha) * 0.92;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(mask, 0, 0, w, h);
+    ctx.restore();
+  }
 }
