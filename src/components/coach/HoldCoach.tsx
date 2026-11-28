@@ -51,13 +51,14 @@ import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { isIOS } from "@/lib/device";
 import { SetupGuide } from "@/components/coach/SetupGuide";
 import { SetStrip } from "@/components/coach/SetStrip";
+import { drawAvatar, neutralRig, retarget, type AvatarLook, type Rig } from "@/components/coach/avatar";
 import { GUIDE_PLAYS, readTips, setTips } from "@/lib/tips";
 import { subscribe as subscribeStore } from "@/lib/store";
 import { markCompletedToday } from "@/lib/localSession";
 import { setPrefs, usePrefs } from "@/lib/prefs";
 import { VOICE, stopSpeaking, tone } from "@/components/coach/coachVoice";
 import { Pill, Ring, btnPrimary } from "@/components/ui/kit";
-import { SpeakerIcon } from "@/components/icons";
+import { AvatarIcon, SpeakerIcon } from "@/components/icons";
 
 // Self-hosted so the coach works on a weak connection or none at all, and
 // so starting a health activity does not hand a third-party CDN the user's IP.
@@ -192,11 +193,16 @@ const CUE_COPY: Record<HoldCue, (c: CueContext) => string | null> = {
     `Too short to count. Aim for at least a few seconds, ideally the full ${targetSec}.`,
 };
 
+/** Rest between sets of a hold. A suggestion, not a prescription, and it can be skipped. */
+const REST_SEC = 15;
+
 interface UiState {
   cue: HoldCue | RepCue;
   inPosition: boolean;
   /** The timer is frozen, waiting for them to get back into position. */
   paused: boolean;
+  /** Seconds of rest left between sets, or null when not resting. */
+  restSec: number | null;
   elapsedSec: number;
   reps: number;
   partials: number;
@@ -365,6 +371,9 @@ export function HoldCoach({
   const lumaRef = useRef<{ value: number | null; at: number }>({ value: null, at: 0 });
   const lumaCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lineupStartRef = useRef(0);
+  // Rest between sets: until when, and whether its end still needs announcing.
+  const restUntilRef = useRef(0);
+  const restOnRef = useRef(false);
   // The set-up guide covers the screen while the camera and model load behind it. It
   // plays for the first few sessions (or with ?guide=1), and again on "How to set up".
   const guideActiveRef = useRef(false);
@@ -444,6 +453,7 @@ export function HoldCoach({
     cue: "seek",
     inPosition: false,
     paused: false,
+    restSec: null,
     elapsedSec: 0,
     reps: 0,
     partials: 0,
@@ -458,10 +468,18 @@ export function HoldCoach({
   // A clear "that set counted" moment, so nobody has to guess whether it did.
   const [banner, setBanner] = useState<{ title: string; detail: string; partial: boolean } | null>(null);
   // Saved preference. The loop reads the ref so it never restarts on a toggle.
-  const voiceOn = usePrefs().voice;
+  const { voice: voiceOn, avatar: avatarOn, look: avatarLook } = usePrefs();
   useEffect(() => {
     voiceOnRef.current = voiceOn;
   }, [voiceOn]);
+  // Avatar view: the figure is drawn on the canvas from the tracked pose instead of the camera picture.
+  const avatarRef = useRef(false);
+  const lookRef = useRef<AvatarLook>(avatarLook);
+  const rigRef = useRef<Rig | null>(null);
+  useEffect(() => {
+    avatarRef.current = avatarOn;
+    lookRef.current = avatarLook;
+  }, [avatarOn, avatarLook]);
   const [needsTap, setNeedsTap] = useState(false);
   const [noBodyHelp, setNoBodyHelp] = useState(false);
   const [helpDismissed, setHelpDismissed] = useState(false);
@@ -974,7 +992,14 @@ export function HoldCoach({
       const reading = isReps ? rawReading : holdWithMargin(rawReading, holdTrackerRef.current.phase !== "seeking");
       const resolved = resolveInPosition(readabilityRef.current, reading, now);
       readabilityRef.current = resolved.tracker;
-      const inPosition = resolved.inPosition;
+      // During the rest between sets nothing starts counting, whatever the body is doing.
+      const resting = !isReps && now < restUntilRef.current;
+      if (restOnRef.current && !resting) {
+        restOnRef.current = false;
+        restUntilRef.current = 0;
+        if (voiceOnRef.current) VOICE.restOver(repsRef.current + 1);
+      }
+      const inPosition = resting ? false : resolved.inPosition;
       if (reading && inPosition) {
         attemptRef.current.sum += reading.quality;
         attemptRef.current.n += 1;
@@ -1056,9 +1081,13 @@ export function HoldCoach({
             detail: result.partial
               ? `Held ${heldSec} of ${targetSec}s, a short set. ${remaining > 0 ? `${remaining} to go.` : "That's the last one."}`
               : remaining > 0
-                ? `Held ${heldSec}s. ${remaining} ${remaining === 1 ? "set" : "sets"} to go. Release and reset.`
+                ? `Held ${heldSec}s. ${remaining} ${remaining === 1 ? "set" : "sets"} to go. Rest for ${REST_SEC} seconds.`
                 : `Held ${heldSec}s. All ${config.targetReps} sets done.`,
           });
+          if (remaining > 0) {
+            restUntilRef.current = performance.now() + REST_SEC * 1000;
+            restOnRef.current = true;
+          }
           window.setTimeout(() => setBanner(null), remaining === 0 ? 2600 : 3400);
         }
         if (remaining === 0) {
@@ -1071,7 +1100,7 @@ export function HoldCoach({
         attemptRef.current = { sum: 0, n: 0 };
       }
 
-      drawFrame(canvas, video, landmarks, lastSideRef.current, inPosition);
+      drawFrame(canvas, video, landmarks, lastSideRef.current, inPosition || resting);
 
       if (now - lastUiRef.current > UI_INTERVAL_MS) {
         lastUiRef.current = now;
@@ -1083,18 +1112,21 @@ export function HoldCoach({
               remaining,
               lastSetSec: Math.round(lastSetMsRef.current / 1000),
             });
-        const unreadable = resolved.unreadable && !inPosition;
-        const message = unreadable
-          ? "Looking for you. Make sure your whole body is in frame."
-          : (scripted ?? (inPosition ? holdCue : (reading?.hint ?? "Get into position to begin.")));
+        const unreadable = resolved.unreadable && !inPosition && !resting;
+        const message = resting
+          ? `Rest. Shake it out. Set ${repsRef.current + 1} starts when you're ready.`
+          : unreadable
+            ? "Looking for you. Make sure your whole body is in frame."
+            : (scripted ?? (inPosition ? holdCue : (reading?.hint ?? "Get into position to begin.")));
         const paused = result.cue === "paused";
-        const good = !paused && (result.cue === "banked" || result.cue === "counted" || (inPosition && !scripted));
+        const good = !resting && !paused && (result.cue === "banked" || result.cue === "counted" || (inPosition && !scripted));
         const bad = result.cue === "released-early" || result.cue === "tooFast" || unreadable;
         setUi((u) => ({
           ...u,
           cue: result.cue,
           inPosition,
           paused,
+          restSec: resting ? Math.max(1, Math.ceil((restUntilRef.current - now) / 1000)) : null,
           elapsedSec: Math.floor(result.elapsedMs / 1000),
           reps: repsRef.current,
           partials: partialsRef.current,
@@ -1118,6 +1150,14 @@ export function HoldCoach({
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (avatarRef.current) {
+        // Avatar view: no camera picture and no skeleton, just the figure following the person.
+        const have = landmarks && landmarks.length > 0;
+        const rig = have ? retarget(landmarks, canvas.width, canvas.height, rigRef.current) : rigRef.current;
+        if (rig) rigRef.current = rig;
+        drawAvatar(ctx, canvas.width, canvas.height, rig ?? neutralRig(canvas.width, canvas.height), lookRef.current, good, !rig);
+        return;
+      }
       if (!landmarks || landmarks.length === 0) return;
       renderSkeleton(ctx, canvas, landmarks, side, good);
     }
@@ -1193,7 +1233,12 @@ export function HoldCoach({
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden bg-night text-white">
-      <video ref={videoRef} muted playsInline className="absolute inset-0 h-full w-full -scale-x-100 object-contain" />
+      <video
+        ref={videoRef}
+        muted
+        playsInline
+        className={`absolute inset-0 h-full w-full -scale-x-100 object-contain ${avatarOn ? "opacity-0" : ""}`}
+      />
       {showGuide && <SetupGuide posture={posture} onDone={finishGuide} />}
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full -scale-x-100 object-contain" />
       <div
@@ -1215,6 +1260,17 @@ export function HoldCoach({
                 ? `${unit} ${current} of ${config.targetReps}`
                 : sessionLabel ?? "Coach"}
           </Pill>
+          <button
+            type="button"
+            onClick={() => {
+              setPrefs({ avatar: !avatarOn });
+            }}
+            aria-pressed={avatarOn}
+            aria-label={avatarOn ? "Show the camera view" : "Show my avatar"}
+            className={`flex h-9 w-9 items-center justify-center rounded-full backdrop-blur ${avatarOn ? "bg-mint text-night" : "bg-white/20"}`}
+          >
+            <AvatarIcon className="h-5 w-5" on={avatarOn} />
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -1365,6 +1421,7 @@ export function HoldCoach({
                 targetSec={isReps ? null : targetSec}
                 paused={ui.paused}
                 releasing={!isReps && ui.cue === "banked" && sets.length < config.targetReps}
+                restSec={ui.restSec}
               />
             </div>
             {banner && (
@@ -1386,8 +1443,8 @@ export function HoldCoach({
             )}
             <div className="mt-3 flex items-start justify-between">
               <div className="flex flex-col gap-2">
-                <Pill tone={ui.inPosition && !ui.paused ? "ok" : "warn"} className="self-start">
-                  {ui.paused ? "Paused" : ui.inPosition ? "✓ In position" : "Get into position"}
+                <Pill tone={ui.restSec !== null || (ui.inPosition && !ui.paused) ? "ok" : "warn"} className="self-start">
+                  {ui.restSec !== null ? "Resting" : ui.paused ? "Paused" : ui.inPosition ? "✓ In position" : "Get into position"}
                 </Pill>
                 {reference && showRef && (
                   <button type="button" onClick={() => setShowRef(false)} aria-label="Hide the reference clip" className="w-24">
@@ -1428,9 +1485,29 @@ export function HoldCoach({
             </div>
             <div className="flex-1" />
             <div className="rounded-[22px] bg-white/95 p-3.5 text-ink shadow-[0_8px_24px_rgba(0,0,0,.2)]">
-              <p className={`font-sans text-sm font-extrabold ${messageColor}`} aria-live="polite">
+              <p className={`font-sans text-sm font-extrabold ${ui.restSec !== null ? "text-mint-deep" : messageColor}`} aria-live="polite">
                 {ui.message}
               </p>
+              {ui.restSec !== null && (
+                <div className="mt-2 flex items-center gap-3">
+                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-chip">
+                    <div
+                      className="h-full rounded-full bg-mint-deep transition-all duration-300"
+                      style={{ width: `${((REST_SEC - ui.restSec) / REST_SEC) * 100}%` }}
+                    />
+                  </div>
+                  <span className="font-display text-lg font-extrabold">{ui.restSec}s</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      restUntilRef.current = 0;
+                    }}
+                    className="rounded-full bg-chip px-3 py-1.5 font-sans text-xs font-bold text-ink/70"
+                  >
+                    Skip rest
+                  </button>
+                </div>
+              )}
               <div className="mt-2 flex justify-between font-sans text-[11px] text-ink/55">
                 <span>{lastSetLine}</span>
                 <span>

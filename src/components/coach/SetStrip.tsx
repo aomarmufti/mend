@@ -16,6 +16,7 @@ export function SetStrip({
   targetSec,
   paused,
   releasing = false,
+  restSec = null,
 }: {
   total: number;
   done: SetDetail[];
@@ -26,6 +27,8 @@ export function SetStrip({
   paused: boolean;
   /** The last set has just counted and they are still holding: let go before the next starts. */
   releasing?: boolean;
+  /** Seconds of rest left between sets, or null when not resting. */
+  restSec?: number | null;
 }) {
   const finished = done.length;
   const current = Math.min(finished + 1, total);
@@ -74,7 +77,7 @@ export function SetStrip({
                 }`}
               >
                 <span className="text-sm leading-none font-extrabold">
-                  {d ? (d.partial ? "~" : "✓") : isCurrent && releasing ? "–" : isCurrent && liveSec !== null ? `${liveSec}s` : i + 1}
+                  {d ? (d.partial ? "~" : "✓") : isCurrent && restSec !== null ? `${restSec}s` : isCurrent && releasing ? "–" : isCurrent && liveSec !== null ? `${liveSec}s` : i + 1}
                 </span>
                 <span className="mt-0.5 text-[10px] leading-none font-bold opacity-80">
                   {d
@@ -82,7 +85,9 @@ export function SetStrip({
                       ? `${Math.round(d.heldMs / 1000)}s`
                       : "done"
                     : isCurrent
-                      ? releasing
+                      ? restSec !== null
+                        ? "rest"
+                        : releasing
                         ? "release first"
                         : paused
                         ? "paused"

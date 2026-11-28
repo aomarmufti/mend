@@ -136,5 +136,9 @@ export const VOICE = {
     tone(320, 160);
     speak("Not quite far enough. Go a little deeper next one.");
   },
+  restOver: (nextSet: number) => {
+    tone(660, 140);
+    speak(`Rest's over. Get set for set ${nextSet}.`);
+  },
   unreadable: () => speak("I can't see you — check your whole body is in frame."),
 };

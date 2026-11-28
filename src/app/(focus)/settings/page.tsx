@@ -5,6 +5,15 @@ import { useRouter } from "next/navigation";
 import { btnSecondary, Card } from "@/components/ui/kit";
 import { useConsent } from "@/lib/consent";
 import { setPrefs, usePrefs } from "@/lib/prefs";
+import { AvatarPreview } from "@/components/AvatarPreview";
+import {
+  HAIR_COLORS,
+  HAIR_STYLES,
+  PANTS_COLORS,
+  SKIN_TONES,
+  TOP_COLORS,
+  type AvatarLook,
+} from "@/components/coach/avatar";
 import { addDemoHistory, removeDemoHistory, useDemoActive } from "@/lib/demoData";
 import { useAllRecords } from "@/lib/progress";
 import { useActivePlan } from "@/lib/usePlan";
@@ -71,6 +80,37 @@ function Toggle({ label, hint, on, onChange }: { label: string; hint?: string; o
   );
 }
 
+function Swatches({
+  label,
+  options,
+  value,
+  onPick,
+}: {
+  label: string;
+  options: string[];
+  value: string;
+  onPick: (v: string) => void;
+}) {
+  return (
+    <div className="mt-3">
+      <p className="text-xs font-bold text-ink/60">{label}</p>
+      <div className="mt-1.5 flex gap-2">
+        {options.map((c) => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => onPick(c)}
+            aria-label={`${label} ${c}`}
+            aria-pressed={value.toLowerCase() === c.toLowerCase()}
+            style={{ backgroundColor: c }}
+            className={`h-8 w-8 rounded-full ring-offset-2 ${value.toLowerCase() === c.toLowerCase() ? "ring-2 ring-ink" : "ring-1 ring-ink/15"}`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const router = useRouter();
   const prefs = usePrefs();
@@ -78,6 +118,8 @@ export default function SettingsPage() {
   const demo = useDemoActive();
   const active = useActivePlan();
   const records = useAllRecords();
+
+  const setLook = (patch: Partial<AvatarLook>) => setPrefs({ look: { ...prefs.look, ...patch } });
 
   const wipe = (message: string) => {
     if (window.confirm(message)) {
@@ -116,6 +158,37 @@ export default function SettingsPage() {
         <div className="flex justify-between text-xs text-ink/60">
           <span>Slower</span>
           <span>Faster</span>
+        </div>
+      </Card>
+
+      <Card className="mt-4 p-5">
+        <h2 className="font-display text-lg font-extrabold">Avatar view</h2>
+        <p className="mt-2 text-sm text-ink/70">
+          In the coach, see your avatar instead of yourself. Your camera still tracks your movement on your phone, but the
+          picture isn&apos;t shown, recorded or uploaded.
+        </p>
+        <Toggle label="Use my avatar in the coach" on={prefs.avatar} onChange={(v) => setPrefs({ avatar: v })} />
+        <div className="mt-2 flex items-start gap-4">
+          <AvatarPreview look={prefs.look} className="h-44 w-28 shrink-0 rounded-2xl" />
+          <div className="min-w-0 flex-1">
+            <Swatches label="Skin" options={SKIN_TONES} value={prefs.look.skin} onPick={(v) => setLook({ skin: v })} />
+            <Swatches label="Hair" options={HAIR_COLORS} value={prefs.look.hair} onPick={(v) => setLook({ hair: v })} />
+            <Swatches label="Top" options={TOP_COLORS} value={prefs.look.top} onPick={(v) => setLook({ top: v })} />
+            <Swatches label="Trousers" options={PANTS_COLORS} value={prefs.look.pants} onPick={(v) => setLook({ pants: v })} />
+          </div>
+        </div>
+        <div className="mt-3 flex gap-2">
+          {HAIR_STYLES.map((h) => (
+            <button
+              key={h}
+              type="button"
+              onClick={() => setLook({ hairStyle: h })}
+              aria-pressed={prefs.look.hairStyle === h}
+              className={`flex-1 rounded-full py-2 text-xs font-bold capitalize ${prefs.look.hairStyle === h ? "bg-mint-deep text-white" : "bg-chip text-ink/60"}`}
+            >
+              {h === "none" ? "No hair" : h}
+            </button>
+          ))}
         </div>
       </Card>
 
