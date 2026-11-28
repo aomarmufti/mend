@@ -5,7 +5,7 @@ const sections: { h: string; p: string[] }[] = [
     h: "The short version",
     p: [
       "Reknit runs on your phone. Your camera video is analysed on the device and is never recorded, uploaded or stored.",
-      "We do not run accounts or analytics, and we do not sell or share your data.",
+      "We do not run accounts or analytics, and we do not sell or share your data. The only thing you can choose to send us is your email, if you join the waitlist.",
     ],
   },
   {
@@ -18,6 +18,12 @@ const sections: { h: string; p: string[] }[] = [
     h: "What we keep",
     p: [
       "Your chosen area and condition, pain scores, completed sessions and exercise results are stored only in this app on your device. They are health information, so we treat them with care and give you full control.",
+    ],
+  },
+  {
+    h: "The waitlist",
+    p: [
+      "If you join the waitlist, we store your email address so we can tell you when the app is ready. We use it for nothing else and don't share it. To have it removed, email hello@reknit.co.uk.",
     ],
   },
   {
