@@ -232,9 +232,12 @@ export const mobilityExercises: MobilityExercise[] = [
       // hold's grace window rather than tightened away, and the replay
       // confirms it — a solid run of in-position frames from 2.4s with no
       // broken holds.
-      signal: { kind: "jointBand", knee: { max: 80 }, hip: { min: 155 } },
+      // Loosened for a phone held at arm's length: a thigh within 40 degrees of
+      // vertical with the heel folded in is a quad stretch. 155 rejected real,
+      // correct stretches because the hip angle jitters a few degrees a frame.
+      signal: { kind: "jointBand", knee: { max: 100 }, hip: { min: 140 } },
       targetReps: 3,
-      hold: { minHoldMs: HOLD_MS },
+      hold: { minHoldMs: 10_000 }, // single-leg balance: 10s, not the 15s of the lying stretches
       setupHint: "Stand side-on to the camera with your whole body in frame.",
     },
     conditions: ["patellofemoral-pain-syndrome", "knee-osteoarthritis"],

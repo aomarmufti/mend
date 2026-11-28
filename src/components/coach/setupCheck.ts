@@ -108,7 +108,9 @@ export interface FrameStats {
   luma: number | null;
 }
 
-const VIS = 0.5;
+// A hand gripping an ankle (quad stretch) or a limb behind the body drops that
+// joint to about 0.4 to 0.6; 0.5 flickered "get your whole body in view".
+const VIS = 0.4;
 const EDGE = 0.015;
 const MIN_LUMA = 0.16;
 /** Dead zone for centring, as fraction of frame width either side of centre. */
@@ -156,7 +158,7 @@ export function assessSetup(
 
   // Required joints must be readable AND inside the frame. Side-on, the
   // better-seen joint of each pair stands for the pair.
-  const eitherSide = spec.orientation === "side";
+  const eitherSide = spec.orientation !== "front";
   const req = spec.required.flatMap(([a, b]) => {
     const pa = landmarks[a], pb = landmarks[b];
     if (!eitherSide) return [pa, pb];
@@ -249,7 +251,7 @@ export const initialGate: GateState = {
 };
 
 /** How long the user must be ready and still before the countdown starts. */
-export const STEADY_MS = 600;
+export const STEADY_MS = 500;
 export const COUNT_STEP_MS = 1000;
 /**
  * A run of not-ready frames shorter than this is a tracking blip (a joint's
@@ -262,13 +264,13 @@ export const GRACE_MS = 500;
  * Balancing on one leg wobbles the torso a little, so this is looser than a
  * standing-still threshold would be.
  */
-const MOVING_SPEED = 0.3;
+const MOVING_SPEED = 1.0;
 /**
  * Once the 3-2-1 has started, only a clear step or walk cancels it. Going back
  * to "Hold still" because someone swayed while balancing reads as the app not
  * paying attention.
  */
-const COUNTDOWN_MOVING_SPEED = 0.8;
+const COUNTDOWN_MOVING_SPEED = 1.6;
 
 export interface GateStep {
   state: GateState;
