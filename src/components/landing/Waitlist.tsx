@@ -31,7 +31,7 @@ export function Waitlist() {
   }
 
   if (state === "done") {
-    return <p className="font-sans text-sm font-bold text-mint">You&apos;re on the list. We&apos;ll be in touch.</p>;
+    return <p className="font-sans text-sm font-bold text-mint">You&apos;re on the list. We&apos;ll be in touch by email.</p>;
   }
   return (
     <form onSubmit={submit} className="flex flex-col gap-2.5">

@@ -61,10 +61,10 @@ export default function LandingPage() {
 
         <section id="waitlist" className="scroll-mt-6">
           <h2 className="mt-14 font-display text-2xl font-extrabold">Get early access</h2>
-          <p className="mt-2 mb-4 text-sm text-white/70">Leave your email and we&apos;ll tell you when the iPhone app is ready.</p>
+          <p className="mt-2 mb-4 text-sm text-white/70">Leave your email and we&apos;ll invite you to try early versions of the app and tell you when it&apos;s ready.</p>
           <Waitlist />
           <p className="mt-3 text-xs leading-relaxed text-white/50">
-            We&apos;ll only use your email to tell you about the app. Ask us to remove it any time:{" "}
+            We&apos;ll only use your email to send you a confirmation, invite you to test the app and tell you when it&apos;s ready. Ask us to remove it any time:{" "}
             <a href="mailto:reknit.support@gmail.com" className="underline">reknit.support@gmail.com</a>.
           </p>
         </section>
