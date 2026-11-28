@@ -3,18 +3,13 @@
 import { useSyncExternalStore } from "react";
 import { Card } from "@/components/ui/kit";
 import { isIOS } from "@/lib/device";
-import { readRaw, subscribe, writeRaw } from "@/lib/store";
+import { subscribe } from "@/lib/store";
+import { readTips, setTips } from "@/lib/tips";
 
-const TIPS_KEY = "mend:tips:v1";
 const noop = () => () => {};
 
 function dismissed(): boolean {
-  try {
-    const raw = readRaw(TIPS_KEY);
-    return raw ? !!(JSON.parse(raw) as { a2hs?: boolean }).a2hs : false;
-  } catch {
-    return false;
-  }
+  return !!readTips().a2hs;
 }
 
 /**
@@ -44,7 +39,7 @@ export function HomeScreenTip() {
       </p>
       <button
         type="button"
-        onClick={() => writeRaw(TIPS_KEY, JSON.stringify({ a2hs: true }))}
+        onClick={() => setTips({ a2hs: true })}
         className="mt-2 font-sans text-xs font-bold text-ink/50"
       >
         Not now

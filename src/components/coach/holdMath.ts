@@ -51,7 +51,10 @@ export interface HoldConfig {
 
 export const DEFAULT_HOLD_CONFIG: HoldConfig = {
   minHoldMs: 15_000,
-  graceMs: 600,
+  // A second, up from 0.6. Real readings from a phone dip out of position for the
+  // odd half-second without the person having moved; forgiving that costs nothing,
+  // because a hold only banks credit for the time actually spent in position.
+  graceMs: 1_000,
   nearlyThereMs: 3_000,
   // A third of the target. Long enough that a stumble or a readjustment is
   // not a set; short enough that genuine effort is not thrown away.
@@ -717,6 +720,26 @@ export const initialReadability: ReadabilityTracker = {
  * grace period, then falls back to out-of-position so an unreadable camera
  * can never quietly complete a rep.
  */
+/**
+ * Once a hold has started, a reading just outside the target still counts as being
+ * in it. Without this the position is a hard cut-off: someone easing a few degrees
+ * past the edge of the band, or swaying a little as the stretch settles, was marked
+ * as having let go and their timer reset, even though they were plainly still doing
+ * the exercise. Getting in still needs the real target; staying in has a margin.
+ *
+ * `quality` is the 0 to 100 grade each signal reports. 100 is comfortably inside and
+ * it falls away outside the band, so this allows roughly 12 degrees of slack on an
+ * angle band, and a small slice of the tolerance on a threshold.
+ */
+export const STAY_QUALITY = 60;
+
+export function holdWithMargin(reading: SignalReading | null, holding: boolean): SignalReading | null {
+  if (reading && holding && !reading.inPosition && reading.quality >= STAY_QUALITY) {
+    return { ...reading, inPosition: true };
+  }
+  return reading;
+}
+
 export function resolveInPosition(
   tracker: ReadabilityTracker,
   reading: SignalReading | null,
