@@ -18,12 +18,15 @@ export interface HoldTracker {
   phase: HoldPhase;
   holdStartedAt: number | null;
   lastInPositionAt: number | null;
+  /** Time spent out of position during this hold that did not count towards it. */
+  pausedMs?: number;
 }
 
 export const initialHoldTracker: HoldTracker = {
   phase: "seeking",
   holdStartedAt: null,
   lastInPositionAt: null,
+  pausedMs: 0,
 };
 
 export interface HoldConfig {
@@ -31,6 +34,13 @@ export interface HoldConfig {
   minHoldMs: number;
   /** How long a momentary drop-out (sensor jitter, a shifted hand) is forgiven before the hold resets. */
   graceMs: number;
+  /**
+   * After the grace window, how long the timer waits, frozen, for the person to get
+   * back into position before the hold is given up. Time out of position does not
+   * count, but a readjustment does not wipe out what was already held. Zero means
+   * no pause: the hold ends as soon as the grace window does.
+   */
+  pauseMs?: number;
   /** How far out from minHoldMs the "nearly there" cue starts. */
   nearlyThereMs: number;
   /**
@@ -55,6 +65,9 @@ export const DEFAULT_HOLD_CONFIG: HoldConfig = {
   // odd half-second without the person having moved; forgiving that costs nothing,
   // because a hold only banks credit for the time actually spent in position.
   graceMs: 1_000,
+  // Then up to four more seconds of pause before a hold is given up, so shifting
+  // position or recovering from a wobble keeps what has been held so far.
+  pauseMs: 4_000,
   nearlyThereMs: 3_000,
   // A third of the target. Long enough that a stumble or a readjustment is
   // not a set; short enough that genuine effort is not thrown away.
@@ -67,6 +80,7 @@ export type HoldCue =
   | "nearly" // in position, within nearlyThereMs of the target
   | "banked" // this hold has reached the target (fires once, then continues to report "banked" while still held)
   | "banked-partial" // came out early, but held long enough to count as a short set
+  | "paused" // out of position for longer than the grace window: the timer is waiting
   | "released-early"; // dropped out before holding long enough to count at all
 
 export interface HoldResult {
@@ -77,6 +91,8 @@ export interface HoldResult {
   repBanked: boolean;
   /** True when the banked set was short of the target. */
   partial: boolean;
+  /** True while the timer is frozen waiting for the person to come back. */
+  paused?: boolean;
   /** Duration actually held, on the frame a set banks. Zero otherwise. */
   bankedMs: number;
   cue: HoldCue;
@@ -99,18 +115,28 @@ export function trackHold(
   now: number,
   config: HoldConfig = DEFAULT_HOLD_CONFIG,
 ): HoldResult {
+  const pauseMs = config.pauseMs ?? 0;
+  const pausedBefore = tracker.pausedMs ?? 0;
+
   if (inPosition) {
     if (tracker.phase === "seeking") {
       const started: HoldTracker = {
         phase: "holding",
         holdStartedAt: now,
         lastInPositionAt: now,
+        pausedMs: 0,
       };
       return { tracker: started, elapsedMs: 0, repBanked: false, partial: false, bankedMs: 0, cue: "holding" };
     }
 
-    const elapsed = now - (tracker.holdStartedAt ?? now);
-    const updated: HoldTracker = { ...tracker, lastInPositionAt: now };
+    // Coming back after a gap: the part beyond the grace window was a pause and did not count.
+    let pausedMs = pausedBefore;
+    if (tracker.phase === "holding" && tracker.lastInPositionAt !== null) {
+      const gap = now - tracker.lastInPositionAt;
+      if (gap > config.graceMs) pausedMs += gap - config.graceMs;
+    }
+    const elapsed = Math.max(0, now - (tracker.holdStartedAt ?? now) - pausedMs);
+    const updated: HoldTracker = { ...tracker, lastInPositionAt: now, pausedMs };
 
     if (tracker.phase === "holding" && elapsed >= config.minHoldMs) {
       return {
@@ -141,10 +167,11 @@ export function trackHold(
   }
 
   const lastSeen = tracker.lastInPositionAt ?? now;
-  if (now - lastSeen < config.graceMs) {
-    // Within the grace window — treat as still holding rather than reset on
-    // a single dropped or misread frame.
-    const elapsed = now - (tracker.holdStartedAt ?? now);
+  const sinceLast = now - lastSeen;
+  if (sinceLast < config.graceMs) {
+    // Within the grace window: treat as still holding rather than reset on a
+    // single dropped or misread frame.
+    const elapsed = Math.max(0, now - (tracker.holdStartedAt ?? now) - pausedBefore);
     return {
       tracker,
       elapsedMs: elapsed,
@@ -155,11 +182,18 @@ export function trackHold(
     };
   }
 
-  // Grace expired — genuinely out of position.
+  // Past the grace window, and the person is mid-hold: freeze the timer and wait a little
+  // for them to get back, rather than throwing away what they have already held.
+  if (tracker.phase === "holding" && sinceLast < config.graceMs + pauseMs) {
+    const frozen = Math.max(0, lastSeen + config.graceMs - (tracker.holdStartedAt ?? lastSeen) - pausedBefore);
+    return { tracker, elapsedMs: frozen, repBanked: false, partial: false, bankedMs: 0, paused: true, cue: "paused" };
+  }
+
+  // Genuinely out of position.
   const gaveUpEarly = tracker.phase === "holding";
   // Measure to the last frame actually in position, not to now: the grace
   // window is forgiveness for a dropped reading, not extra credit.
-  const heldFor = Math.max(0, lastSeen - (tracker.holdStartedAt ?? lastSeen));
+  const heldFor = Math.max(0, lastSeen - (tracker.holdStartedAt ?? lastSeen) - pausedBefore);
 
   if (gaveUpEarly && heldFor >= config.minPartialMs) {
     return {

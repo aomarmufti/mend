@@ -23,15 +23,18 @@ for (let t = 0; t <= 9000; t += 100) {
 }
 check('a 0.9 s dropout mid-hold does not reset it', resets === 0 && banked, `resets ${resets} banked ${banked}`);
 
-// ...but really leaving for 2 s still ends it.
-tr = initialHoldTracker; let ended = false;
-for (let t = 0; t <= 6000; t += 100) {
-  const inPos = !(t >= 3000 && t < 5000);
-  const h = trackHold(tr, inPos, t, cfg);
-  if (h.cue === 'banked-partial' || h.cue === 'released-early') ended = true;
-  tr = h.tracker;
+// ...and really leaving (about 6 s) still ends it; a 2 s step out only pauses it.
+function endedWith(outFrom, outTo) {
+  let t2 = initialHoldTracker; let ended = false;
+  for (let t = 0; t <= 14000; t += 100) {
+    const h = trackHold(t2, !(t >= outFrom && t < outTo), t, cfg);
+    if (h.cue === 'banked-partial' || h.cue === 'released-early') ended = true;
+    t2 = h.tracker;
+  }
+  return ended;
 }
-check('leaving for 2 s still ends the hold', ended, '');
+check('leaving for about 6 s still ends the hold', endedWith(3000, 9000), '');
+check('a 2 s step out only pauses it', !endedWith(3000, 5000), '');
 
 let failed = 0;
 for (const [name, ok, got] of results) { console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}  ${ok ? '' : got}`); if (!ok) failed++; }

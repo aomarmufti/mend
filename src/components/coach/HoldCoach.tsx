@@ -50,6 +50,7 @@ import { logExercise, type SetDetail } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { isIOS } from "@/lib/device";
 import { SetupGuide } from "@/components/coach/SetupGuide";
+import { SetStrip } from "@/components/coach/SetStrip";
 import { GUIDE_PLAYS, readTips, setTips } from "@/lib/tips";
 import { subscribe as subscribeStore } from "@/lib/store";
 import { markCompletedToday } from "@/lib/localSession";
@@ -186,6 +187,7 @@ const CUE_COPY: Record<HoldCue, (c: CueContext) => string | null> = {
     remaining > 0
       ? `Counted: ${lastSetSec}s of ${targetSec}s, a partial set. Next one when you're ready.`
       : `Counted: ${lastSetSec}s of ${targetSec}s, a partial set. That's the last one.`,
+  paused: () => "Paused. Get back into position and the timer carries on from here.",
   "released-early": ({ targetSec }) =>
     `Too short to count. Aim for at least a few seconds, ideally the full ${targetSec}.`,
 };
@@ -193,6 +195,8 @@ const CUE_COPY: Record<HoldCue, (c: CueContext) => string | null> = {
 interface UiState {
   cue: HoldCue | RepCue;
   inPosition: boolean;
+  /** The timer is frozen, waiting for them to get back into position. */
+  paused: boolean;
   elapsedSec: number;
   reps: number;
   partials: number;
@@ -439,6 +443,7 @@ export function HoldCoach({
   const [ui, setUi] = useState<UiState>({
     cue: "seek",
     inPosition: false,
+    paused: false,
     elapsedSec: 0,
     reps: 0,
     partials: 0,
@@ -450,6 +455,8 @@ export function HoldCoach({
     lineupMs: 0,
   });
   const [sets, setSets] = useState<SetDetail[]>([]);
+  // A clear "that set counted" moment, so nobody has to guess whether it did.
+  const [banner, setBanner] = useState<{ title: string; detail: string; partial: boolean } | null>(null);
   // Saved preference. The loop reads the ref so it never restarts on a toggle.
   const voiceOn = usePrefs().voice;
   useEffect(() => {
@@ -1040,11 +1047,25 @@ export function HoldCoach({
           else VOICE.repBanked(repsRef.current, remaining);
         }
         spokenCountRef.current = null;
+        if (!isReps) {
+          const n = setsRef.current.length;
+          const heldSec = Math.round(result.bankedMs / 1000);
+          setBanner({
+            partial: result.partial,
+            title: result.partial ? `Set ${n} counted` : `Set ${n} complete`,
+            detail: result.partial
+              ? `Held ${heldSec} of ${targetSec}s, a short set. ${remaining > 0 ? `${remaining} to go.` : "That's the last one."}`
+              : remaining > 0
+                ? `Held ${heldSec}s. ${remaining} ${remaining === 1 ? "set" : "sets"} to go. Release and reset.`
+                : `Held ${heldSec}s. All ${config.targetReps} sets done.`,
+          });
+          window.setTimeout(() => setBanner(null), remaining === 0 ? 2600 : 3400);
+        }
         if (remaining === 0) {
           // Give the final cue a moment on screen before the summary.
           window.setTimeout(() => {
             if (!cancelled && statusRef.current === "tracking") setStatus("done");
-          }, 1800);
+          }, isReps ? 1800 : 2800);
         }
       } else if (result.elapsedMs === 0 && !inPosition) {
         attemptRef.current = { sum: 0, n: 0 };
@@ -1066,17 +1087,19 @@ export function HoldCoach({
         const message = unreadable
           ? "Looking for you. Make sure your whole body is in frame."
           : (scripted ?? (inPosition ? holdCue : (reading?.hint ?? "Get into position to begin.")));
-        const good = result.cue === "banked" || result.cue === "counted" || (inPosition && !scripted);
+        const paused = result.cue === "paused";
+        const good = !paused && (result.cue === "banked" || result.cue === "counted" || (inPosition && !scripted));
         const bad = result.cue === "released-early" || result.cue === "tooFast" || unreadable;
         setUi((u) => ({
           ...u,
           cue: result.cue,
           inPosition,
+          paused,
           elapsedSec: Math.floor(result.elapsedMs / 1000),
           reps: repsRef.current,
           partials: partialsRef.current,
           message,
-          tone: good ? "good" : bad ? "bad" : inPosition ? "good" : "warn",
+          tone: good ? "good" : bad ? "bad" : paused ? "warn" : inPosition ? "good" : "warn",
         }));
       }
     }
@@ -1333,10 +1356,38 @@ export function HoldCoach({
 
         {status === "tracking" && (
           <>
+            <div className="mt-3">
+              <SetStrip
+                total={config.targetReps}
+                done={sets}
+                unit={unit}
+                liveSec={isReps ? null : ui.elapsedSec}
+                targetSec={isReps ? null : targetSec}
+                paused={ui.paused}
+                releasing={!isReps && ui.cue === "banked" && sets.length < config.targetReps}
+              />
+            </div>
+            {banner && (
+              <div
+                className="pointer-events-none absolute inset-x-6 top-[30%] z-30 rounded-3xl bg-white p-5 text-center text-ink shadow-[0_16px_40px_rgba(0,0,0,.35)]"
+                role="status"
+                aria-live="assertive"
+              >
+                <span
+                  className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full text-3xl font-extrabold text-white ${
+                    banner.partial ? "bg-[#E0905A]" : "bg-mint-deep"
+                  }`}
+                >
+                  {banner.partial ? "~" : "✓"}
+                </span>
+                <p className="mt-2 font-display text-2xl font-extrabold">{banner.title}</p>
+                <p className="mt-1 font-sans text-sm text-ink/65">{banner.detail}</p>
+              </div>
+            )}
             <div className="mt-3 flex items-start justify-between">
               <div className="flex flex-col gap-2">
-                <Pill tone={ui.inPosition ? "ok" : "warn"} className="self-start">
-                  {ui.inPosition ? "✓ In position" : "Get into position"}
+                <Pill tone={ui.inPosition && !ui.paused ? "ok" : "warn"} className="self-start">
+                  {ui.paused ? "Paused" : ui.inPosition ? "✓ In position" : "Get into position"}
                 </Pill>
                 {reference && showRef && (
                   <button type="button" onClick={() => setShowRef(false)} aria-label="Hide the reference clip" className="w-24">
@@ -1361,8 +1412,17 @@ export function HoldCoach({
                 )}
               </div>
               <div className="rounded-full bg-white/92 p-0.5">
-                <Ring pct={ringPct} size={78} color={ui.inPosition ? "#2FA67F" : "#D98A3A"}>
-                  {isReps ? ui.reps : ui.cue === "banked" ? "✓" : `${ui.elapsedSec}s`}
+                <Ring pct={ringPct} size={78} color={ui.inPosition && !ui.paused ? "#2FA67F" : "#D98A3A"}>
+                  {isReps ? (
+                    ui.reps
+                  ) : ui.cue === "banked" ? (
+                    "✓"
+                  ) : (
+                    <span className="flex flex-col items-center leading-none">
+                      <span>{ui.elapsedSec}s</span>
+                      <span className="mt-0.5 text-[9px] font-bold opacity-60">{ui.paused ? "paused" : `of ${targetSec}s`}</span>
+                    </span>
+                  )}
                 </Ring>
               </div>
             </div>
