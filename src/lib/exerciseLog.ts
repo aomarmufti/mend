@@ -38,6 +38,8 @@ export interface ExerciseRecord {
   setDetails?: SetDetail[];
   /** Longest single hold in this record, for holds. */
   bestHoldMs?: number;
+  /** Added by "sample history" for a presentation, so it can be labelled and removed. */
+  demo?: boolean;
 }
 
 export interface SetDetail {
@@ -89,6 +91,17 @@ export function logExercise(
 
 export function allRecords(): ExerciseRecord[] {
   return read();
+}
+
+/** Adds ready-made records (used for sample history), newest first, within the cap. */
+export function addRecords(records: ExerciseRecord[]) {
+  const merged = [...records, ...read()].sort((a, b) => b.at - a.at);
+  write(merged.slice(0, MAX_RECORDS));
+}
+
+/** Removes every record the predicate matches. */
+export function removeRecords(match: (r: ExerciseRecord) => boolean) {
+  write(read().filter((r) => !match(r)));
 }
 
 /** Stable empty reference, so a server render never looks like a store change. */

@@ -16,6 +16,7 @@ import { shouldStop } from "@/lib/safety";
 import { useActivePlan, type ActivePlan } from "@/lib/usePlan";
 import { doneToday, streakDetail, trainedDays, useAllRecords, useCompletedDates } from "@/lib/progress";
 import { NextUp } from "@/components/today/NextUp";
+import { milestoneFor } from "@/lib/milestones";
 import { LogoMark } from "@/components/brand/Logo";
 
 export function SessionRunner() {
@@ -85,6 +86,12 @@ function Session({ active, doneSlugs }: { active: ActivePlan; doneSlugs: Set<str
               ? `${streak > 0 ? `${streak} day streak. ` : ""}${doneCount} of ${outcomes.length} done. You can pick up the rest from Today whenever you like.`
               : "Nothing was logged this time. Come back when you're ready: even a short session counts."}
         </p>
+
+        {didAny && milestoneFor(streak) && (
+          <p className="mt-3 rounded-2xl bg-success-soft px-4 py-3 font-sans text-sm font-extrabold text-success">
+            {milestoneFor(streak)!.line}
+          </p>
+        )}
 
         <div className="mt-5 grid gap-2">
           {outcomes.map(({ exercise, result }) => {

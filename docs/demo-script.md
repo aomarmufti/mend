@@ -4,7 +4,9 @@
 1. Open the production site over HTTPS on the phone. Allow the camera when asked. Do one full coached exercise end to end.
 2. Add to Home Screen, or open the TestFlight build. Check it opens with no signal on the first page (offline page).
 3. Prop the phone at hip height, 2 to 3 metres away, in good light. Practise the line-up once.
-4. Charge the phone. Turn on Do Not Disturb. Turn the volume up so the spoken coach is audible.
+4. **Want the streak and calendar to have something to show?** Settings > Presenting Reknit? > Add sample history. It adds five clearly labelled past days (never today), so you can still do today's session live. Remove it afterwards in the same place. Say it is sample data if asked; the app labels it too.
+5. Add Reknit to the Home Screen (Safari > Share > Add to Home Screen) so it opens full screen, with no browser bars.
+6. Charge the phone. Turn on Do Not Disturb. Turn the volume up so the spoken coach is audible.
 
 **Flow**
 1. **Welcome screen.** "Move better. Hurt less." The live preview behind the text is the camera coach.

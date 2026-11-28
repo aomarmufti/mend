@@ -6,7 +6,8 @@ import { sessionMinutes } from "@/data/catalog";
 import { stageOrder } from "@/data/exercises";
 import { localDateKey } from "@/lib/exerciseLog";
 import { reminderLabel, setReminder, useProfile } from "@/lib/profile";
-import { trainedDays, useAllRecords, useCompletedDates, usePainEntries } from "@/lib/progress";
+import { streakDetail, trainedDays, useAllRecords, useCompletedDates, usePainEntries } from "@/lib/progress";
+import { nextMilestone } from "@/lib/milestones";
 import { MOVE_UP_DAYS, MOVE_UP_PAIN_MAX, stageReadiness } from "@/lib/safety";
 import type { ActivePlan } from "@/lib/usePlan";
 
@@ -43,6 +44,8 @@ export function NextUp({ active }: { active: ActivePlan }) {
   const profile = useProfile();
   const pain = usePainEntries();
   const trained = useTrainedLast14();
+  const streak = streakDetail(trainedDays(useAllRecords(), useCompletedDates())).count;
+  const goal = nextMilestone(streak);
   const [time, setTime] = useState(profile.reminder ?? "08:00");
   const { shape, plan, usable } = active;
   const minutes = sessionMinutes(usable);
@@ -59,6 +62,12 @@ export function NextUp({ active }: { active: ActivePlan }) {
       <Card>
         <p className={eyebrow}>Tomorrow</p>
         <p className="mt-0.5 font-display text-lg font-extrabold">Same time, same plan</p>
+        {streak > 0 && goal && (
+          <p className="mt-1 font-sans text-xs font-bold text-mint-deep">
+            Tomorrow is day {streak + 1}.{" "}
+            {goal.away === 1 ? `One more day reaches ${goal.days} in a row.` : `${goal.away} more days reaches ${goal.days} in a row.`}
+          </p>
+        )}
         <p className="mt-1 font-sans text-sm text-ink/60">
           {usable.length} {usable.length === 1 ? "exercise" : "exercises"}, about {minutes} minutes
           {shape.staged ? ` · ${plan.stage} stage` : ""}

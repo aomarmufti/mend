@@ -16,6 +16,8 @@ import {
   weekStrip,
 } from "@/lib/progress";
 import { useActivePlan } from "@/lib/usePlan";
+import { useDemoActive } from "@/lib/demoData";
+import { DemoBanner } from "@/components/DemoBanner";
 
 type View = "week" | "month" | "all";
 
@@ -34,6 +36,7 @@ export function ProgressScreen() {
   const completed = useCompletedDates();
   const pain = usePainEntries();
   const active = useActivePlan();
+  const demo = useDemoActive();
   const today = new Date();
   const todayKey = localDateKey(today);
   const [view, setView] = useState<View>("month");
@@ -75,6 +78,7 @@ export function ProgressScreen() {
     const area = active?.shape.condition.name ?? "Rehab";
     const lines = [
       `Reknit progress: ${area}`,
+      demo ? "Note: includes sample data added for a demonstration." : null,
       `Days trained: ${days.size} (${thisMonth} this month)`,
       change ? `Pain: ${change.start}/10 at the start, ${change.now}/10 now` : "Pain: not enough check-ins yet",
       best ? `Best hold: ${formatHold(best)}` : null,
@@ -108,6 +112,8 @@ export function ProgressScreen() {
         <h1 className="font-display text-[28px] font-extrabold">Progress</h1>
         <Pill tone="ok">{thisMonth} this month</Pill>
       </div>
+
+      <DemoBanner />
 
       <div className="flex rounded-full bg-white/70 p-1 ring-1 ring-[#DCE6EA]" role="tablist">
         {(["week", "month", "all"] as View[]).map((v) => (
@@ -330,7 +336,9 @@ export function ProgressScreen() {
       </button>
       {shared && <p className="text-center font-sans text-xs text-ink/55">{shared}</p>}
       <p className="pb-2 text-center font-sans text-[11px] text-ink/40">
-        Everything here is from your own sessions and check-ins. Nothing is sample data.
+        {demo
+          ? "Includes sample data added for a demonstration."
+          : "Everything here is from your own sessions and check-ins. Nothing is sample data."}
       </p>
     </div>
   );
