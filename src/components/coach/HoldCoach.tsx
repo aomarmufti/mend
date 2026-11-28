@@ -1,5 +1,6 @@
 "use client";
 
+import { LandmarkSmoother } from "@/components/coach/landmarkSmoother";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
@@ -186,6 +187,7 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
   const rafRef = useRef<number | null>(null);
   const lastVideoTimeRef = useRef(-1);
   const lastLandmarksRef = useRef<NormalizedLandmark[] | null>(null);
+  const smootherRef = useRef(new LandmarkSmoother());
 
   const baselineRef = useRef<Baselines>(emptyBaselines);
   const calibFramesRef = useRef(0);
@@ -501,8 +503,13 @@ export function HoldCoach({ config, reference, onFinish, finishLabel }: HoldCoac
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (!landmarks || landmarks.length === 0) return;
-      renderSkeleton(ctx, canvas, landmarks, side, cue);
+      if (!landmarks || landmarks.length === 0) {
+        smootherRef.current.reset();
+        return;
+      }
+      // Smooth what we draw only; scoring above still used the raw landmarks.
+      const drawn = smootherRef.current.smooth(landmarks, performance.now());
+      renderSkeleton(ctx, canvas, drawn, side, cue);
     }
 
     start();

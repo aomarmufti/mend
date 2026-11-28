@@ -17,6 +17,7 @@ import {
 } from "@/components/coach/poseMath";
 import { logExercise } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
+import { LandmarkSmoother } from "@/components/coach/landmarkSmoother";
 import { markCompletedToday } from "@/lib/localSession";
 import { ReferenceFigure } from "@/components/coach/ReferenceFigure";
 
@@ -133,6 +134,7 @@ export function PoseCoach({ onFinish, finishLabel }: PoseCoachProps = {}) {
   // Hot-path state lives in refs: touching React state every frame would
   // re-render the whole tree 30–60 times a second for no visible gain.
   const smoothRef = useRef<number | null>(null);
+  const smootherRef = useRef(new LandmarkSmoother());
   const lastFrameRef = useRef<FrameAnalysis | null>(null);
   const repTrackerRef = useRef<RepTracker>(initialRepTracker);
   const repsRef = useRef(0);
@@ -325,9 +327,14 @@ export function PoseCoach({ onFinish, finishLabel }: PoseCoachProps = {}) {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (!landmarks || landmarks.length === 0) return;
+      if (!landmarks || landmarks.length === 0) {
+        smootherRef.current.reset();
+        return;
+      }
 
-      renderSkeleton(ctx, canvas, landmarks, frame);
+      // Smooth what we draw only; scoring still used the raw landmarks.
+      const drawn = smootherRef.current.smooth(landmarks, performance.now());
+      renderSkeleton(ctx, canvas, drawn, frame);
     }
 
     start();
