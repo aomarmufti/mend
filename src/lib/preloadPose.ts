@@ -1,10 +1,13 @@
 "use client";
 
+import { isIOS } from "@/lib/device";
+
 /**
  * Warms the browser (and the service worker cache) with the pose model while
  * someone reads an exercise page, so the coach starts faster when they tap it.
- * Skipped on Data Saver and slow connections. Safari and iPhone use MoveNet, so
- * they get that model and its code; everything else gets MediaPipe's.
+ * Skipped on Data Saver and slow connections. Desktop Safari uses MoveNet, so it
+ * gets that model and its code; iPhones, iPads and every other browser get
+ * MediaPipe's.
  */
 
 const MEDIAPIPE_FILES = [
@@ -21,9 +24,9 @@ export function preloadPoseModel(): void {
   if (started || typeof window === "undefined") return;
   const conn = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
   if (conn?.saveData || (conn?.effectiveType && /^(slow-2g|2g|3g)$/.test(conn.effectiveType))) return;
-  // Safari and every iPhone web view: the coach uses MoveNet there.
+  // Desktop Safari: the coach uses MoveNet there. iPhones and iPads use MediaPipe.
   const webkit =
-    /AppleWebKit/.test(navigator.userAgent) && !/(Chrome|Chromium|Edg|Android)/.test(navigator.userAgent);
+    /AppleWebKit/.test(navigator.userAgent) && !/(Chrome|Chromium|Edg|Android)/.test(navigator.userAgent) && !isIOS();
   started = true;
   const run = () => {
     if (webkit) {
