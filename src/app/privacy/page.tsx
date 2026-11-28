@@ -21,6 +21,12 @@ const sections: { h: string; p: string[] }[] = [
     ],
   },
   {
+    h: "Crash reports",
+    p: [
+      "If the app hits an error, it can send the error message, the page address and your browser type to our server so we can fix it. It never includes your health information, your camera or your name.",
+    ],
+  },
+  {
     h: "Delete your data",
     p: [
       "Settings > Delete all my data removes everything Reknit has stored. Deleting the app does the same.",

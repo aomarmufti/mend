@@ -14,7 +14,6 @@ export type ProgrammeId = "pfps";
 export interface BodyArea {
   slug: string;
   label: string;
-  icon: string;
   blurb: string;
 }
 
@@ -28,12 +27,12 @@ export interface Condition {
 }
 
 export const bodyAreas: BodyArea[] = [
-  { slug: "knee", label: "Knee", icon: "🦵", blurb: "Kneecap pain, ligament and cartilage injury, wear." },
-  { slug: "hip", label: "Hip", icon: "🕺", blurb: "Outer hip pain, joint stiffness, groin pain." },
-  { slug: "foot", label: "Ankle & foot", icon: "🦶", blurb: "Heel pain, Achilles trouble, sprains." },
-  { slug: "shoulder", label: "Shoulder", icon: "💪", blurb: "Overhead pain, stiffness, cuff injury." },
-  { slug: "elbow", label: "Elbow & wrist", icon: "🤲", blurb: "Gripping pain, tendon overload, nerve symptoms." },
-  { slug: "back", label: "Back", icon: "🧘", blurb: "Low back pain, disc-related pain, sciatica." },
+  { slug: "knee", label: "Knee", blurb: "Kneecap pain, ligament and cartilage injury, wear." },
+  { slug: "hip", label: "Hip", blurb: "Outer hip pain, joint stiffness, groin pain." },
+  { slug: "foot", label: "Ankle & foot", blurb: "Heel pain, Achilles trouble, sprains." },
+  { slug: "shoulder", label: "Shoulder", blurb: "Overhead pain, stiffness, cuff injury." },
+  { slug: "elbow", label: "Elbow & wrist", blurb: "Gripping pain, tendon overload, nerve symptoms." },
+  { slug: "back", label: "Back", blurb: "Low back pain, disc-related pain, sciatica." },
 ];
 
 export const conditions: Condition[] = [

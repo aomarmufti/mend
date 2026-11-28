@@ -4,6 +4,7 @@ import Link from "next/link";
 import { bodyAreas, conditionsForArea, type BodyArea } from "@/data/conditions";
 import { conditionIsReady } from "@/data/catalog";
 import { Card, Pill } from "@/components/ui/kit";
+import { BodyAreaIcon } from "@/components/BodyAreaIcon";
 import { SetupHeader } from "@/components/flow/SetupHeader";
 import { toggleNotifyArea, useProfile } from "@/lib/profile";
 
@@ -42,10 +43,10 @@ export function AreaPicker({ adding }: { adding: boolean }) {
           const notified = profile.notifyAreas.includes(area.slug);
           const inner = (
             <Card className="h-full p-3.5 text-left">
-              <span className="text-xl" aria-hidden="true">
-                {area.icon}
+              <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-success-soft text-mint-deep">
+                <BodyAreaIcon slug={area.slug} className="h-12 w-12" />
               </span>
-              <span className="mt-1 block font-sans text-sm font-extrabold">{area.label}</span>
+              <span className="mt-3 block font-sans text-sm font-extrabold">{area.label}</span>
               <Pill tone={status === "soon" ? "soft" : "ok"} className="mt-2 text-[10px]">
                 {status === "soon" && notified ? "We'll tell you ✓" : LABEL[status]}
               </Pill>
