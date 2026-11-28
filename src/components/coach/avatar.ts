@@ -21,7 +21,7 @@ export interface AvatarLook {
 export const SKIN_TONES = ["#F5D0B5", "#E8B48A", "#C98B5E", "#A8693F", "#7B4A2D", "#4E2E1D"];
 export const HAIR_COLORS = ["#1B1B1F", "#4A2F1B", "#8A5A2B", "#C9A24B", "#B5472F", "#8E8E93"];
 export const TOP_COLORS = ["#34D3A0", "#4A9FE0", "#F0A24A", "#E26D6D", "#A78BFA", "#F3F4F6"];
-export const PANTS_COLORS = ["#26323F", "#3B4A5A", "#5B6B3A", "#7A3B3B", "#2F3E7A", "#1B1B1F"];
+export const PANTS_COLORS = ["#5B7186", "#7C8FA3", "#7E9460", "#B05F63", "#5568B5", "#3A3F47"];
 export const HAIR_STYLES: HairStyle[] = ["short", "long", "bun", "none"];
 
 export const DEFAULT_LOOK: AvatarLook = {
@@ -230,6 +230,14 @@ function shade(hex: string, amount: number): string {
 }
 
 function seg(ctx: CanvasRenderingContext2D, a: Pt, b: Pt, width: number, colour: string) {
+  // A soft light edge so the figure never melts into the backdrop.
+  ctx.strokeStyle = "rgba(255,255,255,0.22)";
+  ctx.lineWidth = width + 4;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.stroke();
   ctx.strokeStyle = colour;
   ctx.lineWidth = width;
   ctx.lineCap = "round";
@@ -243,11 +251,19 @@ function seg(ctx: CanvasRenderingContext2D, a: Pt, b: Pt, width: number, colour:
  * Paints the avatar scene: a dark backdrop, a soft ground shadow that glows mint while
  * the person is doing the exercise well, and the figure itself.
  */
-export function drawAvatar(ctx: CanvasRenderingContext2D, w: number, h: number, rig: Rig, look: AvatarLook, good: boolean) {
+export function drawAvatar(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  rig: Rig,
+  look: AvatarLook,
+  good: boolean,
+  ghost = false,
+) {
   const T = rig.torso;
   const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, "#14403A");
-  g.addColorStop(1, "#0B2220");
+  g.addColorStop(0, "#1E5A50");
+  g.addColorStop(1, "#10332E");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
 
@@ -266,6 +282,10 @@ export function drawAvatar(ctx: CanvasRenderingContext2D, w: number, h: number, 
   ctx.beginPath();
   ctx.ellipse(cx, floorY, T * 1.8, T * 0.35, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  // `ghost` draws the figure faint: a placeholder while nobody has been seen yet.
+  ctx.save();
+  if (ghost) ctx.globalAlpha = 0.2;
 
   const skin = look.skin;
   const topFar = shade(look.top, 0.25);
@@ -334,4 +354,5 @@ export function drawAvatar(ctx: CanvasRenderingContext2D, w: number, h: number, 
   ctx.beginPath();
   ctx.arc(rig.wrist[i].x, rig.wrist[i].y, T * 0.11, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
 }

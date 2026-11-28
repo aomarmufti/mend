@@ -114,3 +114,17 @@ export function SpeakerIcon({ className, muted = false }: IconProps & { muted?: 
     </svg>
   );
 }
+
+export function AvatarIcon({ className, on = false }: IconProps & { on?: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <circle cx="12" cy="8" r="3.4" stroke="currentColor" strokeWidth="1.75" fill={on ? "currentColor" : "none"} />
+      <path
+        d="M5.5 20c.6-3.6 3.2-5.6 6.5-5.6s5.9 2 6.5 5.6"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}

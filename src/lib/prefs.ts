@@ -9,6 +9,7 @@
 
 import { useSyncExternalStore } from "react";
 import { cachedSnapshot, readRaw, subscribe, writeRaw } from "@/lib/store";
+import { DEFAULT_LOOK, cleanLook, type AvatarLook } from "@/components/coach/avatar";
 
 export const PREFS_KEY = "mend:prefs:v1";
 
@@ -18,9 +19,12 @@ export interface Prefs {
   haptics: boolean;
   /** Speech rate multiplier, 0.8 to 1.3. */
   voiceSpeed: number;
+  /** Show an avatar in the coach instead of the camera picture and skeleton. */
+  avatar: boolean;
+  look: AvatarLook;
 }
 
-export const DEFAULT_PREFS: Prefs = { voice: true, sound: true, haptics: true, voiceSpeed: 1 };
+export const DEFAULT_PREFS: Prefs = { voice: true, sound: true, haptics: true, voiceSpeed: 1, avatar: false, look: DEFAULT_LOOK };
 
 export function readPrefs(): Prefs {
   try {
@@ -33,6 +37,8 @@ export function readPrefs(): Prefs {
       sound: p.sound !== false,
       haptics: p.haptics !== false,
       voiceSpeed: speed,
+      avatar: p.avatar === true,
+      look: cleanLook(p.look),
     };
   } catch {
     return DEFAULT_PREFS;
