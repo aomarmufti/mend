@@ -10,7 +10,7 @@ export function AvatarPreview({ look, className = "" }: { look: AvatarLook; clas
     const canvas = ref.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
-    drawAvatar(ctx, canvas.width, canvas.height, neutralRig(canvas.width, canvas.height), look, true);
+    drawAvatar(ctx, canvas.width, canvas.height, neutralRig(canvas.width, canvas.height), look, { good: true });
   }, [look]);
   return <canvas ref={ref} width={240} height={360} className={className} role="img" aria-label="Your avatar" />;
 }
