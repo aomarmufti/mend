@@ -23,7 +23,7 @@ const sections: { h: string; p: string[] }[] = [
   {
     h: "The waitlist",
     p: [
-      "If you join the waitlist, we store your email address so we can tell you when the app is ready. We use it for nothing else and don't share it. To have it removed, email hello@reknit.co.uk.",
+      "If you join the waitlist, we store your email address so we can tell you when the app is ready. We use it for nothing else and don't share it. To have it removed, email reknit.support@gmail.com.",
     ],
   },
   {
@@ -52,7 +52,7 @@ const sections: { h: string; p: string[] }[] = [
   },
   {
     h: "Contact",
-    p: ["Questions about privacy: hello@reknit.co.uk"],
+    p: ["Questions about privacy: reknit.support@gmail.com"],
   },
 ];
 

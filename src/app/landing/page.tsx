@@ -65,7 +65,7 @@ export default function LandingPage() {
           <Waitlist />
           <p className="mt-3 text-xs leading-relaxed text-white/50">
             We&apos;ll only use your email to tell you about the app. Ask us to remove it any time:{" "}
-            <a href="mailto:hello@reknit.co.uk" className="underline">hello@reknit.co.uk</a>.
+            <a href="mailto:reknit.support@gmail.com" className="underline">reknit.support@gmail.com</a>.
           </p>
         </section>
 
