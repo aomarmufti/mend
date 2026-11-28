@@ -44,8 +44,11 @@ export const DEFAULT_SETUP: SetupSpec = {
   required: DEFAULT_REQUIRED,
   // The filmed reference clips put the body at about 0.45 of the frame, and
   // the coach scores them fine; 0.5 asked real users to come closer until
-  // their feet fell out of frame, then to step back again.
-  minExtent: 0.38,
+  // their feet fell out of frame, then to step back again. An iPhone's wide
+  // front camera makes someone standing a normal 2 to 3 metres away fill only
+  // about a third of the portrait frame, so 0.38 kept saying "come closer" to
+  // people who were in a sensible place.
+  minExtent: 0.3,
   maxExtent: 0.92,
 };
 

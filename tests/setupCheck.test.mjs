@@ -23,7 +23,8 @@ const hint = (lm, frame = lit, spec = DEFAULT_SETUP) => assessSetup(lm, frame, A
 
 t('no detection says step into view', () => assert.equal(hint(null), 'no-body'));
 t('good distance and position is ready', () => assert.equal(hint(figure()), 'ready'));
-t('too far away says come closer', () => assert.equal(hint(figure({ h: 0.35 })), 'come-closer'));
+t('too far away says come closer', () => assert.equal(hint(figure({ h: 0.25 })), 'come-closer'));
+t('a phone at a normal distance (about a third of the frame) is ready', () => assert.equal(hint(figure({ h: 0.34 })), 'ready'));
 t('too close says step back', () => assert.equal(hint(figure({ h: 0.95, top: 0.025 })), 'step-back'));
 t('feet cut off by the bottom says step back', () => assert.equal(hint(figure({ h: 0.7, top: 0.4 })), 'step-back'));
 t('low confidence joints say get whole body in view', () => {
@@ -76,7 +77,7 @@ t('gate: ready but not yet steady says hold still, then counts 3 2 1 then goes',
 t('gate: leaving position during the count cancels it', () => {
   let g = initialGate; let s = stepGate(g, ready, 0); g = s.state;
   s = stepGate(g, ready, 700); g = s.state; assert.equal(s.count, 3);
-  const away = assessSetup(figure({ h: 0.3 }), lit, A);
+  const away = assessSetup(figure({ h: 0.22 }), lit, A);
   s = stepGate(g, away, 1200); g = s.state; // within the grace window: still counting
   s = stepGate(g, away, 1800); assert.equal(s.count, null); assert.equal(s.state.phase, 'aligning'); assert.equal(s.hint, 'come-closer');
 });
