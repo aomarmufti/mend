@@ -51,7 +51,7 @@ import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { isIOS } from "@/lib/device";
 import { SetupGuide } from "@/components/coach/SetupGuide";
 import { SetStrip } from "@/components/coach/SetStrip";
-import { drawAvatar, neutralRig, retarget, type AvatarLook, type Rig } from "@/components/coach/avatar";
+import { AvatarAnimator, type AvatarLook } from "@/components/coach/avatar";
 import { GUIDE_PLAYS, readTips, setTips } from "@/lib/tips";
 import { subscribe as subscribeStore } from "@/lib/store";
 import { markCompletedToday } from "@/lib/localSession";
@@ -475,7 +475,7 @@ export function HoldCoach({
   // Avatar view: the figure is drawn on the canvas from the tracked pose instead of the camera picture.
   const avatarRef = useRef(false);
   const lookRef = useRef<AvatarLook>(avatarLook);
-  const rigRef = useRef<Rig | null>(null);
+  const animatorRef = useRef<AvatarAnimator | null>(null);
   useEffect(() => {
     avatarRef.current = avatarOn;
     lookRef.current = avatarLook;
@@ -1152,11 +1152,11 @@ export function HoldCoach({
       if (!ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (avatarRef.current) {
-        // Avatar view: no camera picture and no skeleton, just the figure following the person.
-        const have = landmarks && landmarks.length > 0;
-        const rig = have ? retarget(landmarks, canvas.width, canvas.height, rigRef.current) : rigRef.current;
-        if (rig) rigRef.current = rig;
-        drawAvatar(ctx, canvas.width, canvas.height, rig ?? neutralRig(canvas.width, canvas.height), lookRef.current, good, !rig);
+        // Avatar view: no camera picture and no skeleton, just the figure gliding after the person.
+        const animator = (animatorRef.current ??= new AvatarAnimator());
+        const t = performance.now();
+        animator.update(landmarks, canvas.width, canvas.height, t);
+        animator.draw(ctx, canvas.width, canvas.height, lookRef.current, good);
         return;
       }
       if (!landmarks || landmarks.length === 0) return;
