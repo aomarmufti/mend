@@ -6,7 +6,7 @@ it anywhere. Nothing in the code depends on Vercel.
 ## Easiest: Render (connects to GitHub, deploys on every push to main)
 1. render.com > New > Web Service > pick this repository.
 2. Runtime: **Docker** (it finds the `Dockerfile`). Or Node: build `npm ci && npm run build`, start `npm run start`.
-3. Environment variables (only needed for the waitlist): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
+3. Environment variables (only needed for the waitlist): `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`.
 4. Add the custom domain under Settings > Custom Domains and follow the DNS steps.
 
 ## Other hosts

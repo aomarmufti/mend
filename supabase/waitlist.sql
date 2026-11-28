@@ -1,9 +1,26 @@
--- Waitlist for the landing page. Run once in the Supabase SQL editor.
-create table if not exists public.waitlist (
+-- Waitlist for the landing page. Already applied to the "reknit" Supabase project.
+-- Anyone can add an address (public form); nobody but the project owner can read, change or delete them.
+create table public.waitlist (
   id uuid primary key default gen_random_uuid(),
   email text not null,
-  created_at timestamptz not null default now()
+  source text,
+  created_at timestamptz not null default now(),
+  constraint waitlist_email_format check (
+    email = lower(email)
+    and length(email) <= 254
+    and email ~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]{2,}$'
+  )
 );
-create unique index if not exists waitlist_email_key on public.waitlist (lower(email));
+
+create unique index waitlist_email_key on public.waitlist (email);
+
 alter table public.waitlist enable row level security;
--- No policies: only the server (service role key) can read or write it.
+
+create policy "Anyone can join the waitlist"
+  on public.waitlist
+  for insert
+  to anon
+  with check (true);
+
+revoke all on public.waitlist from anon, authenticated;
+grant insert (email, source) on public.waitlist to anon;
