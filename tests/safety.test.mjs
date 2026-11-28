@@ -1,4 +1,4 @@
-import { shouldStop, suggestStage } from '../src/lib/safety.ts';
+import { shouldStop, suggestStage, stageReadiness } from '../src/lib/safety.ts';
 
 const results = [];
 const check = (name, cond, got) => results.push([name, cond, got]);
@@ -12,6 +12,10 @@ check('sustained rise steps back', suggestStage({ stage: 'Late', pain: p(2, 3, 5
 check('calm and regular suggests progress', suggestStage({ stage: 'Early', pain: p(4, 3, 2, 2), trainedLast14: 9 })?.to === 'Middle', '');
 check('calm but irregular does not', suggestStage({ stage: 'Early', pain: p(3, 2, 2), trainedLast14: 4 }) === null, '');
 check('no progress past Late', suggestStage({ stage: 'Late', pain: p(2, 2, 1), trainedLast14: 12 }) === null, '');
+
+check('readiness: not enough check-ins yet', stageReadiness({ pain: p(2, 2), trainedLast14: 10 }).painOk === false, '');
+check('readiness: pain and days both met', stageReadiness({ pain: p(4, 3, 2, 2), trainedLast14: 9 }).ready === true, '');
+check('readiness: pain fine, days short', (() => { const r = stageReadiness({ pain: p(3, 2, 2), trainedLast14: 5 }); return r.painOk && !r.daysOk && !r.ready; })(), '');
 
 let failed = 0;
 for (const [name, ok, got] of results) {

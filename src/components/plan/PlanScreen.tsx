@@ -105,9 +105,16 @@ export function PlanScreen() {
             </p>
           )}
           {nextStage && (
-            <p className="text-center font-sans text-xs text-ink/45">
-              {stageOrder.slice(stageIndex + 1).join(" and ")} {stageIndex + 1 < 2 ? "stages unlock" : "stage unlocks"} as you progress
-            </p>
+            <Card>
+              <p className={eyebrow}>The road ahead</p>
+              {shape.stages.slice(stageIndex + 1).map((s) => (
+                <div key={s.stage} className="mt-2.5">
+                  <p className="font-sans text-sm font-extrabold">{s.stage} stage</p>
+                  <p className="font-sans text-xs text-ink/60">{s.exercises.map((e) => e.name).join(", ")}</p>
+                  <p className="mt-0.5 font-sans text-[11px] text-ink/45">{stageDescription[s.stage]}</p>
+                </div>
+              ))}
+            </Card>
           )}
 
           {stageIndex > 0 && (
