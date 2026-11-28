@@ -51,7 +51,9 @@ import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { isIOS } from "@/lib/device";
 import { SetupGuide } from "@/components/coach/SetupGuide";
 import { SetStrip } from "@/components/coach/SetStrip";
-import { AvatarAnimator, type AvatarLook } from "@/components/coach/avatar";
+import { AvatarAnimator, FigureCover, type AvatarLook } from "@/components/coach/avatar";
+import { GetReadyCard } from "@/components/coach/GetReadyCard";
+import { getReadyFor } from "@/data/getReady";
 import { GUIDE_PLAYS, readTips, setTips } from "@/lib/tips";
 import { subscribe as subscribeStore } from "@/lib/store";
 import { markCompletedToday } from "@/lib/localSession";
@@ -397,6 +399,28 @@ export function HoldCoach({
     lineupStartRef.current = performance.now();
     if (voiceOnRef.current && statusRef.current === "lineup") VOICE.lineUp("Let's get you lined up.");
   };
+  // Before anything counts: which leg, and how to get into position. The camera runs behind
+  // the card, but nothing starts until "I'm ready". Unilateral exercises then run once per leg.
+  const ready = getReadyFor(config.slug, config.setupHint);
+  const readyGateRef = useRef(true);
+  const [cardOpen, setCardOpen] = useState(true);
+  const [leg, setLeg] = useState<"left" | "right">("right");
+  const legRef = useRef<"left" | "right">("right");
+  const [legIdx, setLegIdx] = useState(0);
+  const legIdxRef = useRef(0);
+  const legBaseRef = useRef(0);
+  const [legBase, setLegBase] = useState(0);
+  const chooseLeg = (l: "left" | "right") => {
+    legRef.current = l;
+    setLeg(l);
+  };
+  const imReady = () => {
+    readyGateRef.current = false;
+    setCardOpen(false);
+    gateRef.current = initialGate;
+    lineupStartRef.current = performance.now();
+    if (voiceOnRef.current) VOICE.lineUp("Get into position. It starts by itself once you're steady.");
+  };
   const gateRef = useRef<GateState>(initialGate);
   const forceStartRef = useRef(false);
   const spokenCueRef = useRef<HoldCue | RepCue | null>(null);
@@ -475,6 +499,7 @@ export function HoldCoach({
   // Avatar view: the figure is drawn on the canvas from the tracked pose instead of the camera picture.
   const avatarRef = useRef(false);
   const lookRef = useRef<AvatarLook>(avatarLook);
+  const coverRef = useRef(new FigureCover());
   const animatorRef = useRef<AvatarAnimator | null>(null);
   useEffect(() => {
     avatarRef.current = avatarOn;
@@ -895,10 +920,10 @@ export function HoldCoach({
           gateSeqRef.current = detectSeqRef.current;
           lastGateRef.current = { assessment, step };
         }
-        if (step.go || forceStartRef.current) {
+        if ((step.go || forceStartRef.current) && !readyGateRef.current) {
           if (voiceOnRef.current) VOICE.inPositionToStart();
           setStatus("calibrating");
-        } else if (voiceOnRef.current) {
+        } else if (voiceOnRef.current && !readyGateRef.current) {
           const last = spokenLineupRef.current;
           if (step.count !== null) {
             if (step.count !== last.count) {
@@ -983,6 +1008,11 @@ export function HoldCoach({
         return;
       }
       if (phase !== "tracking") return;
+      // Between legs the card is up: draw, but count nothing until they are ready.
+      if (readyGateRef.current) {
+        drawFrame(canvas, video, landmarks, null, false);
+        return;
+      }
 
       // A frame the model cannot read is not the same as a frame where the
       // user has let go; resolveInPosition carries the last state briefly.
@@ -998,7 +1028,7 @@ export function HoldCoach({
       if (restOnRef.current && !resting) {
         restOnRef.current = false;
         restUntilRef.current = 0;
-        if (voiceOnRef.current) VOICE.restOver(repsRef.current + 1);
+        if (voiceOnRef.current) VOICE.restOver(repsRef.current - legBaseRef.current + 1);
       }
       const inPosition = resting ? false : resolved.inPosition;
       if (reading && inPosition) {
@@ -1065,12 +1095,12 @@ export function HoldCoach({
         setsRef.current = [...setsRef.current, detail];
         setSets(setsRef.current);
         attemptRef.current = { sum: 0, n: 0 };
-        const remaining = Math.max(0, config.targetReps - repsRef.current);
+        const remaining = Math.max(0, config.targetReps - (repsRef.current - legBaseRef.current));
         if (voiceOnRef.current) {
-          if (isReps) VOICE.repCounted(repsRef.current, remaining);
+          if (isReps) VOICE.repCounted(repsRef.current - legBaseRef.current, remaining);
           else if (result.partial)
             VOICE.partialSet(Math.round(result.bankedMs / 1000), targetSec, remaining);
-          else VOICE.repBanked(repsRef.current, remaining);
+          else VOICE.repBanked(repsRef.current - legBaseRef.current, remaining);
         }
         spokenCountRef.current = null;
         if (!isReps) {
@@ -1092,9 +1122,31 @@ export function HoldCoach({
           window.setTimeout(() => setBanner(null), remaining === 0 ? 2600 : 3400);
         }
         if (remaining === 0) {
-          // Give the final cue a moment on screen before the summary.
+          // Give the final cue a moment on screen before the summary, or before the other leg.
           window.setTimeout(() => {
-            if (!cancelled && statusRef.current === "tracking") setStatus("done");
+            if (cancelled || statusRef.current !== "tracking") return;
+            if (ready.sides && legIdxRef.current === 0) {
+              const next = legRef.current === "left" ? "right" : "left";
+              legRef.current = next;
+              setLeg(next);
+              legIdxRef.current = 1;
+              setLegIdx(1);
+              legBaseRef.current = repsRef.current;
+              setLegBase(repsRef.current);
+              holdTrackerRef.current = initialHoldTracker;
+              repTrackerRef.current = initialRepTrackerState;
+              readabilityRef.current = initialReadability;
+              attemptRef.current = { sum: 0, n: 0 };
+              restUntilRef.current = 0;
+              restOnRef.current = false;
+              spokenCueRef.current = null;
+              setBanner(null);
+              readyGateRef.current = true;
+              setCardOpen(true);
+              if (voiceOnRef.current) VOICE.lineUp(`That's one leg done. Now your ${next} leg. Swap over, then tap I'm ready.`);
+            } else {
+              setStatus("done");
+            }
           }, isReps ? 1800 : 2800);
         }
       } else if (result.elapsedMs === 0 && !inPosition) {
@@ -1105,7 +1157,7 @@ export function HoldCoach({
 
       if (now - lastUiRef.current > UI_INTERVAL_MS) {
         lastUiRef.current = now;
-        const remaining = Math.max(0, config.targetReps - repsRef.current);
+        const remaining = Math.max(0, config.targetReps - (repsRef.current - legBaseRef.current));
         const scripted = isReps
           ? REP_CUE_COPY[result.cue as RepCue](remaining)
           : CUE_COPY[result.cue as HoldCue]({
@@ -1115,7 +1167,7 @@ export function HoldCoach({
             });
         const unreadable = resolved.unreadable && !inPosition && !resting;
         const message = resting
-          ? `Rest. Shake it out. Set ${repsRef.current + 1} starts when you're ready.`
+          ? `Rest. Shake it out. Set ${repsRef.current - legBaseRef.current + 1} starts when you're ready.`
           : unreadable
             ? "Looking for you. Make sure your whole body is in frame."
             : (scripted ?? (inPosition ? holdCue : (reading?.hint ?? "Get into position to begin.")));
@@ -1129,7 +1181,7 @@ export function HoldCoach({
           paused,
           restSec: resting ? Math.max(1, Math.ceil((restUntilRef.current - now) / 1000)) : null,
           elapsedSec: Math.floor(result.elapsedMs / 1000),
-          reps: repsRef.current,
+          reps: repsRef.current - legBaseRef.current,
           partials: partialsRef.current,
           message,
           tone: good ? "good" : bad ? "bad" : paused ? "warn" : inPosition ? "good" : "warn",
@@ -1152,11 +1204,13 @@ export function HoldCoach({
       if (!ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (avatarRef.current) {
-        // Avatar view: no camera picture and no skeleton, just the figure gliding after the person.
+        // Avatar view: the camera picture stays as the background, the person is covered with a
+        // soft patch, and the figure glides after them, like an avatar on a video call.
         const animator = (animatorRef.current ??= new AvatarAnimator());
         const t = performance.now();
         animator.update(landmarks, canvas.width, canvas.height, t);
-        animator.draw(ctx, canvas.width, canvas.height, lookRef.current, good);
+        if (animator.current) coverRef.current.paint(ctx, video, animator.current, canvas.width, canvas.height, animator.visible);
+        animator.draw(ctx, canvas.width, canvas.height, lookRef.current, good, false);
         return;
       }
       if (!landmarks || landmarks.length === 0) return;
@@ -1238,9 +1292,20 @@ export function HoldCoach({
         ref={videoRef}
         muted
         playsInline
-        className={`absolute inset-0 h-full w-full -scale-x-100 object-contain ${avatarOn ? "opacity-0" : ""}`}
+        className={`absolute inset-0 h-full w-full -scale-x-100 object-contain`}
       />
       {showGuide && <SetupGuide posture={posture} onDone={finishGuide} />}
+      {cardOpen && !showGuide && (status === "lineup" || status === "tracking") && (
+        <GetReadyCard
+          title={legIdx === 1 ? "Switch legs" : "Get ready"}
+          steps={ready.steps}
+          leg={leg}
+          chooseLeg={ready.sides && legIdx === 0}
+          onLeg={chooseLeg}
+          cta={legIdx === 1 ? "I'm ready, start" : "I'm ready"}
+          onReady={imReady}
+        />
+      )}
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full -scale-x-100 object-contain" />
       <div
         className="pointer-events-none absolute inset-0"
@@ -1258,7 +1323,7 @@ export function HoldCoach({
             {status === "lineup" || status === "calibrating"
               ? "Line up"
               : status === "tracking"
-                ? `${unit} ${current} of ${config.targetReps}`
+                ? `${ready.sides ? `${leg === "left" ? "Left" : "Right"} leg · ` : ""}${unit} ${current} of ${config.targetReps}`
                 : sessionLabel ?? "Coach"}
           </Pill>
           <button
@@ -1416,7 +1481,7 @@ export function HoldCoach({
             <div className="mt-3">
               <SetStrip
                 total={config.targetReps}
-                done={sets}
+                done={sets.slice(legBase)}
                 unit={unit}
                 liveSec={isReps ? null : ui.elapsedSec}
                 targetSec={isReps ? null : targetSec}
