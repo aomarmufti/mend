@@ -28,8 +28,12 @@ t('a phone at a normal distance (about a third of the frame) is ready', () => as
 t('too close says step back', () => assert.equal(hint(figure({ h: 0.95, top: 0.025 })), 'step-back'));
 t('feet cut off by the bottom says step back', () => assert.equal(hint(figure({ h: 0.7, top: 0.4 })), 'step-back'));
 t('low confidence joints say get whole body in view', () => {
-  const lm = figure(); lm[27].visibility = 0.2;
+  const lm = figure(); lm[27].visibility = 0.2; lm[28].visibility = 0.2;
   assert.equal(hint(lm), 'not-visible');
+});
+t('one hidden ankle (hand gripping it) is not held against the user', () => {
+  const lm = figure(); lm[27].visibility = 0.2;
+  assert.equal(hint(lm), 'ready');
 });
 t('displayed on the left of a mirrored preview says move right', () => {
   // raw x 0.8 -> displayed x 0.2 (left of mirror)
@@ -92,7 +96,22 @@ t('gate: a one-frame tracking blip during the count does not cancel it', () => {
 t('gate: walking about during the count restarts steadying', () => {
   let g = initialGate; let s = stepGate(g, ready, 0); g = s.state;
   s = stepGate(g, ready, 700); g = s.state; assert.equal(s.count, 3);
-  const moved = assessSetup(figure({ cx: 0.62 }), lit, A); // jumped 0.12 in 100ms
+  const moved = assessSetup(figure({ cx: 0.67 }), lit, A); // jumped 0.17 in 100ms (still centred)
   s = stepGate(g, moved, 800); assert.equal(s.count, null); assert.equal(s.hint, 'hold-still');
+});
+t('gate: a quad-stretch wobble (foot swinging, torso swaying) does not cancel the count', () => {
+  // Bounding-box centre jumps because the foot moves; the torso only sways.
+  const wob = (feetDx, torsoDx) => ({ ready: true, hint: 'ready', checks: [], centre: { x: 0.5 + feetDx, y: 0.5 }, anchor: { x: 0.5 + torsoDx, y: 0.5 } });
+  let g = initialGate; let s = stepGate(g, wob(0, 0), 0); g = s.state;
+  s = stepGate(g, wob(0, 0), 700); g = s.state; assert.equal(s.count, 3);
+  s = stepGate(g, wob(0.1, 0.01), 800); g = s.state; assert.equal(s.count, 3);
+  s = stepGate(g, wob(-0.08, 0.02), 900); g = s.state; assert.equal(s.count, 3);
+  s = stepGate(g, wob(0.1, 0.01), 3800); assert.equal(s.go, true);
+});
+t('gate: the torso stepping sideways during the count still cancels it', () => {
+  const at = (x) => ({ ready: true, hint: 'ready', checks: [], centre: { x, y: 0.5 }, anchor: { x, y: 0.5 } });
+  let g = initialGate; let s = stepGate(g, at(0.5), 0); g = s.state;
+  s = stepGate(g, at(0.5), 700); g = s.state; assert.equal(s.count, 3);
+  s = stepGate(g, at(0.85), 800); assert.equal(s.count, null); assert.equal(s.hint, 'hold-still');
 });
 console.log(`${n}/${n} setup-check cases pass`);

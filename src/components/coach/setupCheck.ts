@@ -92,8 +92,15 @@ export interface SetupAssessment {
   ready: boolean;
   hint: HintId;
   checks: SetupCheck[];
-  /** Body centre (raw coords), used by the gate to measure stillness. */
+  /** Body centre (raw coords) of everything visible, used for centring. */
   centre: { x: number; y: number } | null;
+  /**
+   * Centre of the torso (shoulders and hips), used by the gate to measure
+   * stillness. The bounding-box centre includes the feet and hands, so a
+   * raised foot in a quad stretch swings it about even when the person is
+   * holding the position perfectly well. Falls back to `centre`.
+   */
+  anchor?: { x: number; y: number } | null;
 }
 
 export interface FrameStats {
@@ -101,7 +108,9 @@ export interface FrameStats {
   luma: number | null;
 }
 
-const VIS = 0.5;
+// A hand gripping an ankle (quad stretch) or a limb behind the body drops that
+// joint to about 0.4 to 0.6; 0.5 flickered "get your whole body in view".
+const VIS = 0.4;
 const EDGE = 0.015;
 const MIN_LUMA = 0.16;
 /** Dead zone for centring, as fraction of frame width either side of centre. */
@@ -117,6 +126,16 @@ export function assessSetup(
   aspect: number,
   spec: SetupSpec = DEFAULT_SETUP,
 ): SetupAssessment {
+  const torsoPts = landmarks
+    ? [11, 12, 23, 24].map((i) => landmarks[i]).filter((p): p is SetupLandmark => !!p && vis(p) >= VIS)
+    : [];
+  const anchor =
+    torsoPts.length >= 2
+      ? {
+          x: torsoPts.reduce((t, p) => t + p.x, 0) / torsoPts.length,
+          y: torsoPts.reduce((t, p) => t + p.y, 0) / torsoPts.length,
+        }
+      : null;
   const mk = (
     hint: HintId,
     ok: Partial<Record<CheckId, boolean>>,
@@ -128,7 +147,7 @@ export function assessSetup(
       { id: "angle", label: "Angle", ok: ok.angle ?? false },
       { id: "light", label: "Light", ok: ok.light ?? true },
     ];
-    return { ready: hint === "ready" || hint === "hold-still", hint, checks, centre };
+    return { ready: hint === "ready" || hint === "hold-still", hint, checks, centre, anchor };
   };
 
   const lightOk = frame.luma === null || frame.luma >= MIN_LUMA;
@@ -139,7 +158,7 @@ export function assessSetup(
 
   // Required joints must be readable AND inside the frame. Side-on, the
   // better-seen joint of each pair stands for the pair.
-  const eitherSide = spec.orientation === "side";
+  const eitherSide = spec.orientation !== "front";
   const req = spec.required.flatMap(([a, b]) => {
     const pa = landmarks[a], pb = landmarks[b];
     if (!eitherSide) return [pa, pb];
@@ -232,7 +251,7 @@ export const initialGate: GateState = {
 };
 
 /** How long the user must be ready and still before the countdown starts. */
-export const STEADY_MS = 600;
+export const STEADY_MS = 500;
 export const COUNT_STEP_MS = 1000;
 /**
  * A run of not-ready frames shorter than this is a tracking blip (a joint's
@@ -240,8 +259,18 @@ export const COUNT_STEP_MS = 1000;
  * so it does not reset the countdown.
  */
 export const GRACE_MS = 500;
-/** Centre speed (fraction of frame per second) above which they are "moving". */
-const MOVING_SPEED = 0.2;
+/**
+ * Torso speed (fraction of frame per second) above which they are "moving".
+ * Balancing on one leg wobbles the torso a little, so this is looser than a
+ * standing-still threshold would be.
+ */
+const MOVING_SPEED = 1.0;
+/**
+ * Once the 3-2-1 has started, only a clear step or walk cancels it. Going back
+ * to "Hold still" because someone swayed while balancing reads as the app not
+ * paying attention.
+ */
+const COUNTDOWN_MOVING_SPEED = 1.6;
 
 export interface GateStep {
   state: GateState;
@@ -255,12 +284,14 @@ export interface GateStep {
 export function stepGate(prev: GateState, a: SetupAssessment, now: number): GateStep {
   // Stillness from how fast the body centre is travelling.
   let lastMovingAt = prev.lastMovingAt;
-  if (a.centre && prev.lastCentre && prev.lastAt !== null && now > prev.lastAt) {
+  const point = a.anchor ?? a.centre;
+  if (point && prev.lastCentre && prev.lastAt !== null && now > prev.lastAt) {
     const dt = (now - prev.lastAt) / 1000;
-    const speed = Math.hypot(a.centre.x - prev.lastCentre.x, a.centre.y - prev.lastCentre.y) / dt;
-    if (speed > MOVING_SPEED) lastMovingAt = now;
+    const speed = Math.hypot(point.x - prev.lastCentre.x, point.y - prev.lastCentre.y) / dt;
+    const limit = prev.phase === "countdown" ? COUNTDOWN_MOVING_SPEED : MOVING_SPEED;
+    if (speed > limit) lastMovingAt = now;
   }
-  const base = { ...prev, lastCentre: a.centre, lastAt: now, lastMovingAt, notReadySince: null };
+  const base = { ...prev, lastCentre: point, lastAt: now, lastMovingAt, notReadySince: null };
 
   if (prev.phase === "go") return { state: { ...base, phase: "go" }, hint: "ready", count: null, go: true };
 

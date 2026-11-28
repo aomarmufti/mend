@@ -66,7 +66,10 @@ function run({ seconds, tickMs, readingEveryMs, smooth }) {
 //    tick, so each new reading's shimmer lands in a single tick as a jump.
 {
   const goAt = run({ seconds: 40, tickMs: 16, readingEveryMs: 125, smooth: false });
-  check(goAt === null, `old way (judge every screen tick, raw keypoints): never starts (${goAt === null ? 'stuck for 40s' : 'started at ' + goAt + 'ms'})`);
+  // Originally this got stuck for good against a 0.2/s stillness limit. The
+  // limit is now 1.0/s (a stretch cannot be held perfectly still), so raw
+  // per-tick jitter no longer jams the gate. Kept as a check that it starts.
+  check(goAt !== null, `raw per-tick keypoints no longer jam the gate (started at ${goAt}ms)`);
 }
 
 // 4. The fix: judge once per new reading, on smoothed keypoints.
