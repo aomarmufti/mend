@@ -23,7 +23,7 @@ const sections: { h: string; p: string[] }[] = [
   {
     h: "The waitlist",
     p: [
-      "If you join the waitlist, we store your email address so we can tell you when the app is ready. We use it for nothing else and don't share it. To have it removed, email reknit.support@gmail.com.",
+      "If you join the waitlist, we store your email address, and the page you joined from (for example a QR code), so we can send you a confirmation, invite you to try early versions of the app, and tell you when it is ready. We use it for nothing else and don't sell or share it. We use an email-sending service to deliver those emails, and it handles your address only for that. To have your address removed, email reknit.support@gmail.com.",
     ],
   },
   {
