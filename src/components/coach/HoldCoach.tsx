@@ -12,6 +12,7 @@ import {
   initialHoldTracker,
   evaluateSignal,
   resolveInPosition,
+  holdWithMargin,
   initialReadability,
   DEFAULT_HOLD_CONFIG,
   trackReps,
@@ -48,6 +49,9 @@ import { getDemo } from "@/components/coach/exerciseDemos";
 import { logExercise, type SetDetail } from "@/lib/exerciseLog";
 import { readActiveConditionSlug } from "@/lib/activeCondition";
 import { isIOS } from "@/lib/device";
+import { SetupGuide } from "@/components/coach/SetupGuide";
+import { GUIDE_PLAYS, readTips, setTips } from "@/lib/tips";
+import { subscribe as subscribeStore } from "@/lib/store";
 import { markCompletedToday } from "@/lib/localSession";
 import { setPrefs, usePrefs } from "@/lib/prefs";
 import { VOICE, stopSpeaking, tone } from "@/components/coach/coachVoice";
@@ -357,6 +361,29 @@ export function HoldCoach({
   const lumaRef = useRef<{ value: number | null; at: number }>({ value: null, at: 0 });
   const lumaCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lineupStartRef = useRef(0);
+  // The set-up guide covers the screen while the camera and model load behind it. It
+  // plays for the first few sessions (or with ?guide=1), and again on "How to set up".
+  const guideActiveRef = useRef(false);
+  const guideEligible = useSyncExternalStore(
+    subscribeStore,
+    () => new URLSearchParams(window.location.search).get("guide") === "1" || (readTips().guideSeen ?? 0) < GUIDE_PLAYS,
+    () => false,
+  );
+  const [guideDone, setGuideDone] = useState(false);
+  const [guideReplay, setGuideReplay] = useState(false);
+  const showGuide = (guideEligible && !guideDone) || guideReplay;
+  useEffect(() => {
+    guideActiveRef.current = showGuide;
+  }, [showGuide]);
+  const finishGuide = () => {
+    guideActiveRef.current = false;
+    setGuideDone(true);
+    setGuideReplay(false);
+    setTips({ guideSeen: (readTips().guideSeen ?? 0) + 1 });
+    // The line-up clock starts when they can see the camera, not behind the guide.
+    lineupStartRef.current = performance.now();
+    if (voiceOnRef.current && statusRef.current === "lineup") VOICE.lineUp("Let's get you lined up.");
+  };
   const gateRef = useRef<GateState>(initialGate);
   const forceStartRef = useRef(false);
   const spokenCueRef = useRef<HoldCue | RepCue | null>(null);
@@ -702,7 +729,7 @@ export function HoldCoach({
 
       lineupStartRef.current = performance.now();
       setStatus("lineup");
-      if (voiceOnRef.current) VOICE.lineUp("Let's get you lined up.");
+      if (voiceOnRef.current && !guideActiveRef.current) VOICE.lineUp("Let's get you lined up.");
       loop();
     }
 
@@ -741,6 +768,8 @@ export function HoldCoach({
       if (video.readyState < 2 || !video.videoWidth) return;
       const phase = statusRef.current;
       if (phase === "done" || phase === "error") return;
+      // Nothing is judged while the set-up guide is on screen.
+      if (guideActiveRef.current) return;
 
       const now = performance.now();
       let landmarks: NormalizedLandmark[] | null = null;
@@ -931,9 +960,11 @@ export function HoldCoach({
 
       // A frame the model cannot read is not the same as a frame where the
       // user has let go; resolveInPosition carries the last state briefly.
-      const reading = landmarks
+      const rawReading = landmarks
         ? evaluateSignal(landmarks, aspect, config.signal, b.ankleY, b.torsoLength, b.hipY)
         : null;
+      // For holds, being just outside the target mid-hold is not letting go.
+      const reading = isReps ? rawReading : holdWithMargin(rawReading, holdTrackerRef.current.phase !== "seeking");
       const resolved = resolveInPosition(readabilityRef.current, reading, now);
       readabilityRef.current = resolved.tracker;
       const inPosition = resolved.inPosition;
@@ -1140,6 +1171,7 @@ export function HoldCoach({
   return (
     <div className="fixed inset-0 z-50 overflow-hidden bg-night text-white">
       <video ref={videoRef} muted playsInline className="absolute inset-0 h-full w-full -scale-x-100 object-contain" />
+      {showGuide && <SetupGuide posture={posture} onDone={finishGuide} />}
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full -scale-x-100 object-contain" />
       <div
         className="pointer-events-none absolute inset-0"
@@ -1164,7 +1196,6 @@ export function HoldCoach({
             type="button"
             onClick={() => {
               const next = !voiceOn;
-              voiceOnRef.current = next;
               setPrefs({ voice: next });
               if (!next) stopSpeaking();
             }}
@@ -1211,6 +1242,18 @@ export function HoldCoach({
                     ? "✓ I can see you"
                     : HINT_COPY[ui.hint]}
             </div>
+            {status === "lineup" && ui.count === null && (
+              <button
+                type="button"
+                onClick={() => {
+                  guideActiveRef.current = true;
+                  setGuideReplay(true);
+                }}
+                className="mx-auto mt-2 font-sans text-xs font-bold text-white/80 underline underline-offset-4"
+              >
+                How to set up
+              </button>
+            )}
             <div className="flex flex-1 items-center justify-center">
               {status === "lineup" && ui.count !== null && (
                 <span className="font-display text-8xl font-extrabold text-white drop-shadow-[0_4px_20px_rgba(0,0,0,.45)]" aria-live="assertive">
